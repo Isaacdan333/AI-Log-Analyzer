@@ -25,3 +25,7 @@ samples/windows_event_schemas.txt
 .vscode/
 .idea/
 .DS_Store
+
+report.txt
+
+report.json
