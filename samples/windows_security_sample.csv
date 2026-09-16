@@ -1,0 +1,8 @@
+EventID,TimeCreated,Computer,IpAddress,TargetUserName,TargetDomainName,SubjectUserName,SubjectDomainName,LogonType,ProcessName,NewProcessName,NewProcessId,MemberName,PrivilegeList,Group Name,Unused Column
+4624,2026-03-10T02:14:03+00:00,isaac,192.0.2.10,analyst,EXAMPLE,-,-,10,C:\Windows\System32\services.exe,-,-,-,-,-,synthetic successful logon
+4625,2026-03-10T02:15:03+00:00,isaac,198.51.100.8,admin,EXAMPLE,-,-,3,C:\Windows\System32\svchost.exe,-,-,-,-,-,synthetic failed logon
+4672,2026-03-10T02:16:03+00:00,isaac,-,-,-,SYSTEM,NT AUTHORITY,-,-,-,-,-,"SeDebugPrivilege, SeTcbPrivilege",-,synthetic privilege assignment
+4720,2026-03-10T02:17:03+00:00,synthetic,-,new.user,EXAMPLE,admin,EXAMPLE,-,-,-,-,-,-,-,synthetic account creation
+4728,2026-03-10T02:18:03+00:00,synthetic,-,Domain Admins,EXAMPLE,admin,EXAMPLE,-,-,-,-,new.user,-,-,synthetic global group membership
+4732,2026-03-10T02:19:03+00:00,synthetic,-,Administrators,EXAMPLE,admin,EXAMPLE,-,-,-,-,new.user,-,-,synthetic local group membership
+4688,2026-03-10T02:20:03+00:00,isaac,-,-,-,admin,EXAMPLE,-,-,C:\Windows\System32\cmd.exe,0x1f4,-,-,-,synthetic process creation
