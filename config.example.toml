@@ -1,0 +1,72 @@
+# Optional safe defaults for synthetic development.
+# Omit --config to use the detector constructor defaults directly.
+
+[brute_force]
+# Failed attempts required within this rolling window.
+threshold = 5
+# Rolling failure window in minutes.
+window_minutes = 5
+
+[port_scan]
+# Rolling network-activity window in seconds.
+window_seconds = 60
+# Distinct-port thresholds for MEDIUM, HIGH, and CRITICAL findings.
+medium_ports = 10
+high_ports = 25
+critical_ports = 50
+# Minimum hosts and denied ratio for a CRITICAL finding.
+critical_hosts = 2
+critical_denied_ratio = 0.8
+
+[suspicious_login]
+# Window and failure count for a post-failure-burst success.
+post_burst_window_minutes = 10
+failure_burst_threshold = 3
+# Distinct successful accounts and window for multi-account detection.
+multi_account_threshold = 3
+multi_account_window_minutes = 15
+# Off-hours detection is opt-in for synthetic development.
+enable_off_hours = false
+normal_hours_start = 8
+normal_hours_end = 18
+
+[privilege_escalation]
+# Maximum time between correlated privilege-related events.
+correlation_window_minutes = 30
+# Maximum time between a suspicious login and process/privilege activity.
+process_correlation_window_minutes = 15
+
+[impossible_travel]
+# Maximum plausible travel speed in kilometers per hour.
+max_speed_kmh = 900.0
+# Ignore login pairs with less elapsed time or distance than these values.
+min_elapsed_minutes = 0.0
+min_distance_km = 100.0
+# Keep private synthetic addresses eligible by default.
+ignore_private_ips = false
+
+[unusual_traffic]
+# Size of each traffic bucket in seconds.
+bucket_seconds = 300
+# Prior buckets required before evaluating an anomaly.
+min_baseline_buckets = 5
+# Statistical method and its deviation threshold.
+statistical_method = "zscore"
+zscore_threshold = 3.0
+iqr_multiplier = 1.5
+# Group traffic by source, service, or source plus service.
+grouping = "source_ip"
+min_observed_volume = 1
+high_multiplier = 1.5
+critical_multiplier = 2.5
+
+[report]
+# Optional display filters; CLI flags override these values.
+minimum_severity = "LOW"
+timezone = "UTC"
+
+[input]
+# Reject files larger than this many bytes before parsing.
+max_file_size_bytes = 52428800
+# Reject files containing a line longer than this many characters.
+max_line_length = 1048576
