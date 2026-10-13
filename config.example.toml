@@ -60,6 +60,13 @@ min_observed_volume = 1
 high_multiplier = 1.5
 critical_multiplier = 2.5
 
+[ml.isolation_forest]
+# Opt-in settings for the standalone ML component (not used by the CLI engine).
+n_estimators = 100
+max_samples = 256
+contamination = 0.05
+random_state = 42
+
 [report]
 # Optional display filters; CLI flags override these values.
 minimum_severity = "LOW"

@@ -83,10 +83,12 @@ These are defined in [pyproject.toml](pyproject.toml):
 
 - pandas
 - python-dateutil
+- scikit-learn is optional for rule-based runs; install the `ml` extra to use the standalone anomaly model.
 
 ### Development dependencies
 
 - pytest
+- scikit-learn (included so the ML tests run)
 
 ## Local setup
 
@@ -97,6 +99,13 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+```
+
+For a rule-based runtime that also uses the isolated IsolationForest component,
+install the optional ML extra:
+
+```powershell
+python -m pip install -e ".[ml]"
 ```
 
 If PowerShell blocks activation scripts, run Python directly from the environment or adjust your execution policy for the current user only.
@@ -136,9 +145,64 @@ Export JSON output:
 python -m loganalyzer.cli analyze --logs .\samples --format json
 ```
 
+## Standalone IsolationForest scoring
+
+The ML model is opt-in and independent of CLI analysis and deterministic
+alerts. It consumes the existing `FeatureObservation` records and returns
+`MLAnomalyFinding` values labelled `normal` or `anomaly`. An anomaly is a model
+classification, not a confirmed attack. Per-feature ranges and percentiles
+provide training-data context only; they are not causal feature explanations.
+
+This example trains with the generated normal web baseline and scores a
+separate generated web spike. The two sets are parsed and feature-engineered
+independently:
+
+```python
+from pathlib import Path
+
+from loganalyzer.config import load_config
+from loganalyzer.engine import analyze_paths
+from loganalyzer.features import engineer_features
+from loganalyzer.ml import IsolationForestAnomalyDetector
+from loganalyzer.synthetic.generate_logs import generate_logs
+
+training_file = generate_logs(
+    Path("synthetic-training"), scenario="web_baseline", seed=2026
+)["web_baseline"]
+training_result = analyze_paths(
+    [training_file], formats={training_file: "web"}, detectors=[]
+)
+training_observations = engineer_features(training_result.events)
+
+scoring_file = generate_logs(
+    Path("synthetic-scoring"), scenario="web_spike", seed=2026
+)["web_spike"]
+scoring_result = analyze_paths(
+    [scoring_file], formats={scoring_file: "web"}, detectors=[]
+)
+scoring_observations = engineer_features(scoring_result.events)
+
+settings = load_config(Path("config.example.toml")).ml_options["isolation_forest"]
+model = IsolationForestAnomalyDetector(**settings).fit(training_observations)
+for finding in model.score(scoring_observations):
+    print(finding.classification, finding.source_group, finding.time_bucket)
+```
+
+The checked-in generator's baseline is intentionally small; this example
+demonstrates the API, not detection accuracy. In practice, fit against a
+representative normal history and evaluate on separate data before relying on
+model classifications.
+
+`IsolationForestAnomalyDetector` defaults to a fixed random seed and exposes
+its effective training and decision settings through `model.metadata`.
+Settings can be supplied in `[ml.isolation_forest]` in a TOML config and passed
+directly to the standalone component; the existing engine does not load or
+apply them.
+
 ## Current project direction
 
-The project is currently focused on a Phase 1 rule-based MVP approach:
+The project has a rule-based MVP and an independently usable Phase 2 feature
+engineering and anomaly-scoring layer:
 
 1. parse log sources into a normalized event model
 2. run rule-based detectors for suspicious activity
@@ -146,7 +210,8 @@ The project is currently focused on a Phase 1 rule-based MVP approach:
 4. format clear text or JSON reports
 5. validate against synthetic and sample data
 
-Later phases may add statistical anomaly detection and optional LLM-based summarization, but those features are intentionally secondary to explainability and correctness.
+Optional LLM-based summarization remains a later phase and is intentionally
+secondary to explainability and correctness.
 
 ## Security and operational notes
 

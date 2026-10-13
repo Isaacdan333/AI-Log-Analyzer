@@ -23,9 +23,13 @@ _DETECTOR_SECTIONS = frozenset(
         "unusual_traffic",
     }
 )
-_TOP_LEVEL_SECTIONS = _DETECTOR_SECTIONS | {"report", "input"}
+_TOP_LEVEL_SECTIONS = _DETECTOR_SECTIONS | {"report", "input", "ml"}
 _REPORT_OPTIONS = frozenset({"minimum_severity", "timezone"})
 _INPUT_OPTIONS = frozenset({"max_file_size_bytes", "max_line_length"})
+_ML_SECTIONS = frozenset({"isolation_forest"})
+_ISOLATION_FOREST_OPTIONS = frozenset(
+    {"n_estimators", "max_samples", "contamination", "random_state"}
+)
 _SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
 
@@ -36,6 +40,7 @@ class AnalyzerConfig:
     detector_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     report_options: dict[str, Any] = field(default_factory=dict)
     input_limits: InputLimits = field(default_factory=InputLimits)
+    ml_options: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def load_config(path: Path | None = None) -> AnalyzerConfig:
@@ -57,6 +62,25 @@ def load_config(path: Path | None = None) -> AnalyzerConfig:
     if unknown_sections:
         names = ", ".join(sorted(unknown_sections))
         raise ConfigurationError(f"unknown configuration section(s): {names}")
+
+    ml_values = raw_config.get("ml", {})
+    if not isinstance(ml_values, dict):
+        raise ConfigurationError("configuration section 'ml' must be a table")
+    unknown_ml_sections = set(ml_values) - _ML_SECTIONS
+    if unknown_ml_sections:
+        names = ", ".join(sorted(unknown_ml_sections))
+        raise ConfigurationError(f"unknown ML configuration section(s): {names}")
+    ml_options: dict[str, dict[str, Any]] = {}
+    for section in _ML_SECTIONS:
+        values = ml_values.get(section, {})
+        if not isinstance(values, dict):
+            raise ConfigurationError(f"configuration section 'ml.{section}' must be a table")
+        unknown_options = set(values) - _ISOLATION_FOREST_OPTIONS
+        if unknown_options:
+            names = ", ".join(sorted(unknown_options))
+            raise ConfigurationError(f"unknown {section} option(s): {names}")
+        if values:
+            ml_options[section] = dict(values)
 
     detector_options: dict[str, dict[str, Any]] = {}
     for section in _DETECTOR_SECTIONS:
@@ -94,4 +118,5 @@ def load_config(path: Path | None = None) -> AnalyzerConfig:
         detector_options=detector_options,
         report_options=dict(report_options),
         input_limits=input_limits,
+        ml_options=ml_options,
     )

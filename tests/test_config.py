@@ -43,6 +43,12 @@ def test_loads_checked_in_example_configuration() -> None:
     }
     assert config.detector_options["brute_force"]["threshold"] == 5
     assert config.report_options == {"minimum_severity": "LOW", "timezone": "UTC"}
+    assert config.ml_options["isolation_forest"] == {
+        "n_estimators": 100,
+        "max_samples": 256,
+        "contamination": 0.05,
+        "random_state": 42,
+    }
 
 
 def test_custom_values_reach_all_detector_constructors(tmp_path: Path) -> None:
@@ -120,4 +126,15 @@ def test_invalid_report_configuration_is_rejected(tmp_path: Path) -> None:
     path.write_text("[report]\nminimum_severity = \"URGENT\"\n", encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="minimum_severity"):
+        load_config(path)
+
+
+def test_unknown_ml_configuration_options_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "invalid_ml.toml"
+    path.write_text(
+        "[ml.isolation_forest]\nunknown_option = 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="unknown isolation_forest option"):
         load_config(path)

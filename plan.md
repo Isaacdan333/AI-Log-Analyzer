@@ -542,24 +542,40 @@ Completion criteria:
 
 Goal: find unusual behavior that fixed rules may miss.
 
-Add `scikit-learn` and engineer features such as:
+The feature-engineering layer and an isolated `IsolationForest` scorer are
+implemented as optional ML capabilities. The scorer is independent of the
+deterministic engine and CLI.
 
-- Events per minute
-- Failed-login ratio
-- Distinct ports
-- Distinct destination hosts
-- Distinct users
-- Request bytes
-- Status-code distribution
+`loganalyzer.features.engineer_features` accepts normalized events and returns
+fixed-width `FeatureObservation` records without changing the deterministic
+analysis result or alerts. Observations are grouped by source IP and UTC-aligned
+time bucket; records without a source IP are kept separate by log type. A
+60-second bucket is the default, and event volume is normalized to events per
+minute for other bucket lengths.
 
-Start with `IsolationForest` for per-source or per-time-bucket anomaly scoring. Keep the model output separate from deterministic findings and label it as an anomaly rather than a confirmed attack.
+The numeric vector order is fixed by `FEATURE_NAMES`: events per minute, failed
+login ratio, distinct destination ports, distinct destination hosts, distinct
+users, total bytes sent, and HTTP status-class ratios (1xx through 5xx plus
+other). Status ratios use web events with a status value; missing metrics are
+represented as zero.
 
-Completion criteria:
+`loganalyzer.ml.IsolationForestAnomalyDetector` fits only on caller-supplied
+training observations and scores separate observations. It validates vector
+width and finite numeric values, requires at least two training rows, and
+records requested/effective settings and the exact feature contract in model
+metadata and each `MLAnomalyFinding`. Findings preserve source and UTC bucket
+context and expose empirical per-feature training ranges and percentiles as
+context only; IsolationForest does not identify causal feature importance.
+Results are labelled `normal` or `anomaly`, never confirmed attacks, and are
+separate from deterministic `Alert` instances.
 
-- Model is tested on synthetic normal and anomalous data.
-- Features and model settings are recorded.
-- Alerts show why the model considered an observation unusual.
-- A model result cannot silently override a deterministic severity.
+Install the model dependency with `python -m pip install -e ".[ml]"`; the
+development extra also includes scikit-learn for its tests. Model options are
+available under `[ml.isolation_forest]` in `config.example.toml`, but the
+existing analysis engine and CLI do not apply them or change deterministic
+findings. Synthetic validation uses generated normal SSH/web logs and separate
+normal and conspicuously anomalous model observations; it is a reproducible
+functional check, not a claim of general detection accuracy.
 
 ### Phase 3: LLM-Powered Summarization
 
