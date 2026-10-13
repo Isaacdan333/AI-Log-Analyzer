@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loganalyzer.models import NormalizedEvent
+from loganalyzer.parsers.diagnostics import ParseDiagnostic
+from loganalyzer.security import redact_sensitive_text
 
 # Combined log format:
 # %h %l %u [%t] "%r" %>s %b "%{Referer}i" "%{User-Agent}i"
@@ -29,14 +31,20 @@ _TIMESTAMP_FORMAT = "%d/%b/%Y:%H:%M:%S %z"
 class WebServerLogParser:
     """Parse Apache/Nginx combined-format access log lines into normalized events."""
 
+    def __init__(self) -> None:
+        self.diagnostics: list[ParseDiagnostic] = []
+
     def parse_lines(
         self, lines: Iterable[str], source: str = "<memory>"
     ) -> Sequence[NormalizedEvent]:
         events: list[NormalizedEvent] = []
-        for line in lines:
+        self.diagnostics = []
+        for line_number, line in enumerate(lines, start=1):
             event = self.parse_line(line, source)
             if event is not None:
                 events.append(event)
+            else:
+                self.diagnostics.append(ParseDiagnostic(line_number, "malformed or unsupported web line"))
         return events
 
     def parse_file(self, path: Path) -> Sequence[NormalizedEvent]:
@@ -68,10 +76,10 @@ class WebServerLogParser:
             metadata["protocol_version"] = protocol
         referrer = match.group("referrer")
         if referrer and referrer != "-":
-            metadata["referrer"] = referrer
+            metadata["referrer"] = redact_sensitive_text(referrer)
         user_agent = match.group("user_agent")
         if user_agent and user_agent != "-":
-            metadata["user_agent"] = user_agent
+            metadata["user_agent"] = redact_sensitive_text(user_agent)
         if method is not None:
             metadata["method"] = method
 
@@ -87,7 +95,7 @@ class WebServerLogParser:
             user=user_value,
             status=status_value,
             bytes_sent=bytes_sent,
-            path=path,
+            path=redact_sensitive_text(path) if path else None,
             metadata=metadata,
             raw_line=self._safe_raw_line(line),
         )
@@ -107,7 +115,7 @@ class WebServerLogParser:
         match = _REQUEST_RE.match(raw_request.strip())
         if match is None:
             return None, None, None
-        return match.group("method"), match.group("path"), match.group("protocol")
+        return match.group("method"), redact_sensitive_text(match.group("path")), match.group("protocol")
 
     @staticmethod
     def _parse_int(value: str | None) -> int | None:
@@ -121,4 +129,4 @@ class WebServerLogParser:
     @staticmethod
     def _safe_raw_line(line: str) -> str:
         """Keep source context while removing control characters."""
-        return " ".join(line.strip().split())
+        return redact_sensitive_text(" ".join(line.strip().split()))

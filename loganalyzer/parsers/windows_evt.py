@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loganalyzer.models import NormalizedEvent
+from loganalyzer.parsers.diagnostics import ParseDiagnostic
+from loganalyzer.security import redact_sensitive_text
 
 _EVENT_TYPES = {
     "4624": "login_success",
@@ -70,6 +72,9 @@ _SYNTHETIC_EVENT_IDS = {"4720", "4728", "4732"}
 class WindowsEventLogParser:
     """Parse exported Windows Security Event Log CSV rows."""
 
+    def __init__(self) -> None:
+        self.diagnostics: list[ParseDiagnostic] = []
+
     def parse_lines(
         self, lines: Iterable[str], source: str = "<memory>"
     ) -> Sequence[NormalizedEvent]:
@@ -83,12 +88,16 @@ class WindowsEventLogParser:
             for header in reader.fieldnames
             if header is not None
         }
-        for row in reader:
+        self.diagnostics = []
+        for line_number, row in enumerate(reader, start=2):
             if None in row:
+                self.diagnostics.append(ParseDiagnostic(line_number, "malformed Windows CSV row"))
                 continue
             event = self._parse_row(row, headers, source)
             if event is not None:
                 events.append(event)
+            else:
+                self.diagnostics.append(ParseDiagnostic(line_number, "malformed Windows Event Log row"))
         return events
 
     def parse_file(self, path: Path) -> Sequence[NormalizedEvent]:
@@ -170,7 +179,7 @@ class WindowsEventLogParser:
             if value is not None:
                 value = value.strip()
                 if value and value != "-":
-                    return value
+                    return redact_sensitive_text(value)
         return None
 
     @staticmethod
@@ -197,6 +206,6 @@ class WindowsEventLogParser:
 
     @staticmethod
     def _safe_raw_line(row: Mapping[str, str | None]) -> str:
-        return " ".join(
+        return redact_sensitive_text(" ".join(
             f"{key}={value}" for key, value in row.items() if key is not None and value
-        ).replace("\r", " ").replace("\n", " ")
+        ).replace("\r", " ").replace("\n", " "))

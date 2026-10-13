@@ -24,12 +24,15 @@ from loganalyzer.detectors.port_scan import PortScanDetector
 from loganalyzer.detectors.privilege_escalation import PrivilegeEscalationDetector
 from loganalyzer.detectors.suspicious_login import SuspiciousLoginDetector
 from loganalyzer.detectors.unusual_traffic import UnusualTrafficDetector
+from loganalyzer.config import AnalyzerConfig
+from loganalyzer.limits import InputLimits
 from loganalyzer.models import Alert, NormalizedEvent
 from loganalyzer.parsers.base import LogParser
 from loganalyzer.parsers.firewall import FirewallLogParser
 from loganalyzer.parsers.ssh import SSHLogParser
 from loganalyzer.parsers.webserver import WebServerLogParser
 from loganalyzer.parsers.windows_evt import WindowsEventLogParser
+from loganalyzer.synthetic.generate_logs import SYNTHETIC_TRAVEL_LOCATIONS
 
 
 def analyze_ssh_file(
@@ -213,6 +216,27 @@ _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 _MIN_TIME = datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _input_limit_error(path: Path, limits: InputLimits) -> str | None:
+    try:
+        if path.stat().st_size > limits.max_file_size_bytes:
+            return (
+                f"file exceeds maximum size of {limits.max_file_size_bytes} bytes"
+            )
+        with path.open("rb") as handle:
+            line_length = 0
+            while chunk := handle.read(64 * 1024):
+                segments = chunk.split(b"\n")
+                for index, segment in enumerate(segments):
+                    line_length += len(segment)
+                    if line_length > limits.max_line_length:
+                        return f"line exceeds maximum length of {limits.max_line_length} bytes"
+                    if index < len(segments) - 1:
+                        line_length = 0
+    except OSError as error:
+        return f"could not inspect input file: {error}"
+    return None
+
+
 def _alert_sort_key(alert: Alert) -> tuple[int, datetime]:
     rank = _SEVERITY_RANK.get(alert.severity, len(_SEVERITY_RANK))
     time_start = alert.time_start or alert.time_end or _MIN_TIME
@@ -250,14 +274,20 @@ def _deduplicate_alerts(alerts: Iterable[Alert]) -> list[Alert]:
 
 def _default_detectors(
     impossible_travel_locations: Mapping[str, LocationValue] | None,
+    config: AnalyzerConfig | None = None,
 ) -> list[Detector]:
+    detector_options = config.detector_options if config is not None else {}
+    travel_locations = impossible_travel_locations or SYNTHETIC_TRAVEL_LOCATIONS
     return [
-        BruteForceDetector(),
-        PortScanDetector(),
-        SuspiciousLoginDetector(),
-        PrivilegeEscalationDetector(),
-        ImpossibleTravelDetector(impossible_travel_locations or {}),
-        UnusualTrafficDetector(),
+        BruteForceDetector(**detector_options.get("brute_force", {})),
+        PortScanDetector(**detector_options.get("port_scan", {})),
+        SuspiciousLoginDetector(**detector_options.get("suspicious_login", {})),
+        PrivilegeEscalationDetector(**detector_options.get("privilege_escalation", {})),
+        ImpossibleTravelDetector(
+            travel_locations,
+            **detector_options.get("impossible_travel", {}),
+        ),
+        UnusualTrafficDetector(**detector_options.get("unusual_traffic", {})),
     ]
 
 
@@ -267,6 +297,7 @@ def analyze_paths(
     formats: Mapping[Path, str] | None = None,
     detectors: Sequence[Detector] | None = None,
     impossible_travel_locations: Mapping[str, LocationValue] | None = None,
+    config: AnalyzerConfig | None = None,
 ) -> AnalysisResult:
     """Run the full deterministic pipeline over an explicit collection of files.
 
@@ -275,6 +306,7 @@ def analyze_paths(
     remaining files.
     """
     format_overrides = formats or {}
+    input_limits = config.input_limits if config is not None else InputLimits()
     events: list[NormalizedEvent] = []
     diagnostics: list[ParserDiagnostic] = []
     files_processed: list[Path] = []
@@ -283,6 +315,12 @@ def analyze_paths(
     for path in paths:
         if not path.is_file():
             diagnostics.append(ParserDiagnostic(path=path, message="path is not a file"))
+            files_skipped.append(path)
+            continue
+
+        limit_error = _input_limit_error(path, input_limits)
+        if limit_error is not None:
+            diagnostics.append(ParserDiagnostic(path=path, message=limit_error))
             files_skipped.append(path)
             continue
 
@@ -309,6 +347,14 @@ def analyze_paths(
 
         events.extend(file_events)
         files_processed.append(path)
+        for parse_diagnostic in getattr(parser, "diagnostics", ()):
+            diagnostics.append(
+                ParserDiagnostic(
+                    path=path,
+                    message=f"line {parse_diagnostic.line_number}: {parse_diagnostic.message}",
+                    format=format_name,
+                )
+            )
 
     events = [_as_aware_utc(event) for event in events]
     events.sort(key=_event_sort_key)
@@ -316,7 +362,7 @@ def analyze_paths(
     active_detectors = (
         list(detectors)
         if detectors is not None
-        else _default_detectors(impossible_travel_locations)
+        else _default_detectors(impossible_travel_locations, config)
     )
     raw_alerts: list[Alert] = []
     for detector in active_detectors:
@@ -339,6 +385,7 @@ def analyze_directory(
     formats: Mapping[Path, str] | None = None,
     detectors: Sequence[Detector] | None = None,
     impossible_travel_locations: Mapping[str, LocationValue] | None = None,
+    config: AnalyzerConfig | None = None,
 ) -> AnalysisResult:
     """Discover supported log files in ``directory`` and run the full pipeline."""
     return analyze_paths(
@@ -346,4 +393,5 @@ def analyze_directory(
         formats=formats,
         detectors=detectors,
         impossible_travel_locations=impossible_travel_locations,
+        config=config,
     )

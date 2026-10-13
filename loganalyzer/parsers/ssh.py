@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loganalyzer.models import NormalizedEvent
+from loganalyzer.parsers.diagnostics import ParseDiagnostic
+from loganalyzer.security import redact_sensitive_text
 
 _TIMESTAMP_RE = re.compile(r"^(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2})")
 _IP_RE = r"(?P<ip>[^\s]+)"
@@ -21,15 +23,19 @@ class SSHLogParser:
 
     def __init__(self, default_year: int = 2026) -> None:
         self.default_year = default_year
+        self.diagnostics: list[ParseDiagnostic] = []
 
     def parse_lines(
         self, lines: Iterable[str], source: str = "<memory>"
     ) -> Sequence[NormalizedEvent]:
         events: list[NormalizedEvent] = []
-        for line in lines:
+        self.diagnostics = []
+        for line_number, line in enumerate(lines, start=1):
             event = self.parse_line(line, source)
             if event is not None:
                 events.append(event)
+            else:
+                self.diagnostics.append(ParseDiagnostic(line_number, "malformed or unsupported SSH line"))
         return events
 
     def parse_file(self, path: Path) -> Sequence[NormalizedEvent]:
@@ -42,7 +48,10 @@ class SSHLogParser:
         if timestamp_match is None:
             return None
 
-        timestamp = self._parse_timestamp(timestamp_match)
+        try:
+            timestamp = self._parse_timestamp(timestamp_match)
+        except ValueError:
+            return None
         message_match = _SSH_EVENT_RE.search(line[timestamp_match.end() :])
         if message_match is None:
             message = line[timestamp_match.end() :].strip()
@@ -130,4 +139,4 @@ class SSHLogParser:
     @staticmethod
     def _safe_raw_line(line: str) -> str:
         """Keep source context while removing control characters."""
-        return " ".join(line.strip().split())
+        return redact_sensitive_text(" ".join(line.strip().split()))

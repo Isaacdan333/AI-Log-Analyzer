@@ -18,7 +18,7 @@ from loganalyzer.engine import (
 )
 from loganalyzer.models import Alert
 from loganalyzer.parsers.ssh import SSHLogParser
-from loganalyzer.synthetic.generate_logs import generate_logs
+from loganalyzer.synthetic.generate_logs import SYNTHETIC_TRAVEL_LOCATIONS, generate_logs
 
 SAMPLES_DIR = Path(__file__).parents[1] / "samples"
 
@@ -320,22 +320,6 @@ def test_end_to_end_pipeline_detects_all_deterministic_alert_types(tmp_path: Pat
     """samples -> parser selection -> parsers -> NormalizedEvent -> engine -> detectors -> Alert."""
     generate_logs(tmp_path, seed=21)
 
-    # Regenerate the traffic spike two hours after the baseline window so the
-    # unusual-traffic detector has an established baseline before the spike,
-    # matching the pattern already verified in tests/test_detectors.py.
-    base_time = datetime(2026, 3, 10, 2, 0, tzinfo=timezone.utc)
-    spike_lines = [
-        f'198.51.100.44 - - [{(base_time + timedelta(hours=2, seconds=index * 3)).strftime("%d/%b/%Y:%H:%M:%S %z")}] '
-        '"GET /api/search HTTP/1.1" 200 900 "-" "SyntheticBrowser/1.0"'
-        for index in range(30)
-    ]
-    (tmp_path / "web_spike.log").write_text("\n".join(spike_lines) + "\n", encoding="utf-8")
-
-    travel_locations = {
-        "192.0.2.201": Location(40.7128, -74.0060, "Synthetic New York"),
-        "198.51.100.201": Location(51.5074, -0.1278, "Synthetic London"),
-    }
-
     result = analyze_directory(
         tmp_path,
         detectors=[
@@ -343,8 +327,8 @@ def test_end_to_end_pipeline_detects_all_deterministic_alert_types(tmp_path: Pat
             PortScanDetector(),
             SuspiciousLoginDetector(),
             PrivilegeEscalationDetector(),
-            ImpossibleTravelDetector(travel_locations),
-            UnusualTrafficDetector(grouping="service"),
+            ImpossibleTravelDetector(SYNTHETIC_TRAVEL_LOCATIONS),
+            UnusualTrafficDetector(),
         ],
     )
 
@@ -360,3 +344,12 @@ def test_end_to_end_pipeline_detects_all_deterministic_alert_types(tmp_path: Pat
         "impossible_travel",
         "unusual_traffic",
     }
+
+
+def test_generated_normal_ssh_activity_does_not_alert(tmp_path: Path) -> None:
+    generated = generate_logs(tmp_path, scenario="ssh_normal", seed=21)
+
+    result = analyze_directory(tmp_path)
+
+    assert generated["ssh_normal"].is_file()
+    assert result.alerts == ()

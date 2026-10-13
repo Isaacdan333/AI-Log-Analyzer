@@ -29,7 +29,7 @@ def test_analyze_help_exits_zero_and_documents_options(
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    for option in ("--logs", "--out", "--format", "--minimum-severity", "--log-type", "--timezone"):
+    for option in ("--logs", "--out", "--format", "--minimum-severity", "--log-type", "--timezone", "--config"):
         assert option in captured.out
     assert "Examples:" in captured.out
 
@@ -185,3 +185,29 @@ def test_output_file_failure_is_handled_gracefully(capsys: pytest.CaptureFixture
 def test_successful_analysis_with_alerts_still_exits_zero() -> None:
     exit_code = main(["analyze", "--logs", str(SSH_BRUTEFORCE_SAMPLE)])
     assert exit_code == 0
+
+
+def test_cli_applies_configured_brute_force_threshold(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[brute_force]\nthreshold = 9\n", encoding="utf-8")
+
+    exit_code = main(
+        ["analyze", "--logs", str(SSH_BRUTEFORCE_SAMPLE), "--config", str(config_path)]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Number of alerts: 0" in captured.out
+
+
+def test_cli_reports_missing_config_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main(
+        ["analyze", "--logs", str(SSH_BRUTEFORCE_SAMPLE), "--config", str(tmp_path / "missing.toml")]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "Traceback" not in captured.err
+    assert "configuration file does not exist" in captured.err

@@ -45,9 +45,10 @@ def test_generated_scenarios_parse_and_contain_expected_activity(tmp_path: Path)
     assert {event.event_type for event in normal_events} == {"login_success", "login_failure"}
 
     burst_events = ssh_parser.parse_file(generated["ssh_bruteforce"])
-    assert len(burst_events) == 5
-    assert {event.src_ip for event in burst_events} == {"192.0.2.99"}
-    assert {event.event_type for event in burst_events} == {"login_failure"}
+    assert len(burst_events) == 8
+    assert [event.event_type for event in burst_events].count("login_failure") == 5
+    assert [event.event_type for event in burst_events].count("login_success") == 3
+    assert {event.src_ip for event in burst_events} == {"192.0.2.10", "192.0.2.21"}
 
     post_burst_events = ssh_parser.parse_file(generated["ssh_post_burst_success"])
     assert [event.event_type for event in post_burst_events].count("login_failure") == 5

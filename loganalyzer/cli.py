@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from loganalyzer.config import ConfigurationError, load_config
 from loganalyzer.engine import AnalysisResult, analyze_paths, discover_log_files
 from loganalyzer.models import Alert
 from loganalyzer.report import format_json_report, format_text_report
@@ -93,6 +94,12 @@ def build_parser() -> ArgumentParser:
         metavar="TIMEZONE",
         help="IANA timezone name used to display alert timestamps (default: UTC).",
     )
+    analyze.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional TOML configuration file for detector thresholds and report settings.",
+    )
     return parser
 
 
@@ -149,10 +156,21 @@ def _filter_by_minimum_severity(result: AnalysisResult, minimum: str | None) -> 
 def _run_analysis(args: Namespace) -> AnalysisResult:
     paths = _resolve_input_paths(args.logs)
     formats = {path: args.log_type for path in paths} if args.log_type else None
-    result = analyze_paths(paths, formats=formats)
-    if args.timezone:
-        result = _apply_timezone(result, args.timezone)
-    return _filter_by_minimum_severity(result, args.minimum_severity)
+    try:
+        config = load_config(args.config)
+    except ConfigurationError as error:
+        raise CliError(str(error)) from error
+    try:
+        result = analyze_paths(paths, formats=formats, config=config)
+    except (TypeError, ValueError) as error:
+        if args.config is None:
+            raise
+        raise CliError(f"invalid configuration values: {error}") from error
+    timezone_name = args.timezone or config.report_options.get("timezone")
+    minimum_severity = args.minimum_severity or config.report_options.get("minimum_severity")
+    if timezone_name:
+        result = _apply_timezone(result, timezone_name)
+    return _filter_by_minimum_severity(result, minimum_severity)
 
 
 def _render_report(result: AnalysisResult, output_format: str) -> str:

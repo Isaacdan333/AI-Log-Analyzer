@@ -11,6 +11,10 @@ from pathlib import Path
 
 _BASE_TIME = datetime(2026, 3, 10, 2, 0, tzinfo=timezone.utc)
 _DEFAULT_OUTPUT_DIRECTORY = Path(__file__).parents[2] / "samples"
+SYNTHETIC_TRAVEL_LOCATIONS = {
+    "192.0.2.201": (40.7128, -74.0060, "Synthetic North America"),
+    "198.51.100.201": (51.5074, -0.1278, "Synthetic Europe"),
+}
 _WINDOWS_HEADER = (
     "EventID",
     "TimeCreated",
@@ -74,9 +78,13 @@ def _write_ssh_normal(path: Path, randomizer: random.Random) -> None:
 def _write_ssh_bruteforce(path: Path, randomizer: random.Random) -> None:
     process_id = randomizer.randint(2000, 2999)
     lines = [
-        f"{_syslog_timestamp(_BASE_TIME + timedelta(minutes=index))} synthetic-ssh sshd[{process_id + index}]: Failed password for target.user from 192.0.2.99 port 22 ssh2"
+        f"{_syslog_timestamp(_BASE_TIME + timedelta(minutes=index))} synthetic-ssh sshd[{process_id + index}]: Failed password for target.user from 192.0.2.10 port 22 ssh2"
         for index in range(5)
     ]
+    lines.extend(
+        f"{_syslog_timestamp(_BASE_TIME + timedelta(minutes=10 + index * 5))} synthetic-ssh sshd[{process_id + 5 + index}]: Accepted publickey for analyst from 192.0.2.21 port 22 ssh2"
+        for index in range(3)
+    )
     _write_lines(path, lines)
 
 
@@ -124,8 +132,8 @@ def _write_web_baseline(path: Path, randomizer: random.Random) -> None:
 def _write_web_spike(path: Path, randomizer: random.Random) -> None:
     lines = [
         _web_line(
-            _BASE_TIME + timedelta(seconds=index * 3),
-            "198.51.100.44",
+            _BASE_TIME + timedelta(hours=2, seconds=index * 3),
+            "192.0.2.44",
             "/api/search",
             randomizer.randint(800, 1600),
         )

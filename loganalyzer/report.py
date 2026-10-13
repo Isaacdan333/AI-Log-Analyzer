@@ -10,15 +10,16 @@ from typing import Any
 
 from loganalyzer.engine import AnalysisResult, ParserDiagnostic
 from loganalyzer.models import Alert
+from loganalyzer.security import redact_sensitive_text
 
 
 def format_alert(alert: Alert) -> str:
     """Format one alert without adding facts beyond its structured fields."""
     lines = [
-        f"Severity: {alert.severity}",
-        f"Detector: {alert.detector}",
-        f"Title: {alert.title}",
-        f"Summary: {alert.summary}",
+        f"Severity: {redact_sensitive_text(alert.severity)}",
+        f"Detector: {redact_sensitive_text(alert.detector)}",
+        f"Title: {redact_sensitive_text(alert.title)}",
+        f"Summary: {redact_sensitive_text(alert.summary)}",
         "",
         "Observed evidence:",
     ]
@@ -37,7 +38,7 @@ def format_alert(alert: Alert) -> str:
     lines.extend(["", "Recommended actions:"])
     if alert.recommended_actions:
         lines.extend(
-            f"{index}. {action}"
+            f"{index}. {redact_sensitive_text(action)}"
             for index, action in enumerate(alert.recommended_actions, start=1)
         )
     else:
@@ -97,21 +98,23 @@ def _format_diagnostics(diagnostics: Iterable[ParserDiagnostic]) -> list[str]:
     entries = []
     for diagnostic in diagnostics:
         format_suffix = f" (format: {diagnostic.format})" if diagnostic.format else ""
-        entries.append(f"- {diagnostic.path}: {diagnostic.message}{format_suffix}")
+        entries.append(
+            f"- {diagnostic.path}: {redact_sensitive_text(diagnostic.message)}{format_suffix}"
+        )
     return entries or ["None"]
 
 
 def _alert_data(alert: Alert) -> dict[str, Any]:
     return {
-        "severity": alert.severity,
-        "title": alert.title,
-        "summary": alert.summary,
+        "severity": redact_sensitive_text(alert.severity),
+        "title": redact_sensitive_text(alert.title),
+        "summary": redact_sensitive_text(alert.summary),
         "evidence": _json_value(alert.evidence),
         "recommended_actions": _json_value(alert.recommended_actions),
         "source_ips": _json_value(alert.source_ips),
         "time_start": _json_value(alert.time_start),
         "time_end": _json_value(alert.time_end),
-        "detector": alert.detector,
+        "detector": redact_sensitive_text(alert.detector),
         "confidence": _json_value(alert.confidence),
     }
 
@@ -127,6 +130,8 @@ def _diagnostic_data(diagnostic: ParserDiagnostic) -> dict[str, Any]:
 def _json_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
@@ -145,7 +150,7 @@ def _format_value(value: Any) -> str:
         return ", ".join(str(item) for item in value)
     if isinstance(value, datetime):
         return value.isoformat()
-    return str(value)
+    return redact_sensitive_text(str(value))
 
 
 def _format_time_range(start: datetime | None, end: datetime | None) -> str:

@@ -1,0 +1,10 @@
+EventID,TimeCreated,Computer,IpAddress,TargetUserName,TargetDomainName,SubjectUserName,SubjectDomainName,LogonType,ProcessName,NewProcessName,NewProcessId,MemberName,PrivilegeList,Group Name,Unused Column
+4624,2026-03-10T02:00:00+00:00,synthetic-win-08,192.0.2.50,analyst,EXAMPLE,-,-,10,C:\Windows\System32\services.exe,-,-,-,-,-,synthetic successful logon
+4625,2026-03-10T02:01:00+00:00,synthetic-win-08,198.51.100.50,demo.admin,EXAMPLE,-,-,3,C:\Windows\System32\svchost.exe,-,-,-,-,-,synthetic failed logon
+4672,2026-03-10T02:02:00+00:00,synthetic-win-08,-,-,-,SYSTEM,NT AUTHORITY,-,-,-,-,-,SeDebugPrivilege,-,synthetic privilege assignment
+4720,2026-03-10T02:03:00+00:00,synthetic-win-08,-,new.user,EXAMPLE,demo.admin,EXAMPLE,-,-,-,-,-,-,-,synthetic account creation
+4728,2026-03-10T02:04:00+00:00,synthetic-win-08,-,Domain Admins,EXAMPLE,demo.admin,EXAMPLE,-,-,-,-,new.user,-,-,synthetic global group membership
+4732,2026-03-10T02:05:00+00:00,synthetic-win-08,-,Administrators,EXAMPLE,demo.admin,EXAMPLE,-,-,-,-,new.user,-,-,synthetic local group membership
+4688,2026-03-10T02:06:00+00:00,synthetic-win-08,-,-,-,demo.admin,EXAMPLE,-,-,C:\Windows\System32\whoami.exe,0x7a4,-,-,-,synthetic process creation
+4624,2026-03-10T02:10:00+00:00,synthetic-win-08,192.0.2.201,traveler,EXAMPLE,-,-,10,C:\Windows\System32\services.exe,-,-,-,-,-,synthetic distant location login A
+4624,2026-03-10T02:25:00+00:00,synthetic-win-08,198.51.100.201,traveler,EXAMPLE,-,-,10,C:\Windows\System32\services.exe,-,-,-,-,-,synthetic distant location login B
