@@ -145,10 +145,37 @@ Export JSON output:
 python -m loganalyzer.cli analyze --logs .\samples --format json
 ```
 
+## Optional ML anomaly analysis (CLI)
+
+Install the optional dependency (the `dev` extra already includes it):
+
+```powershell
+python -m pip install -e ".[ml]"
+```
+
+Choose a directory or file of representative baseline logs for training and
+keep it separate from the logs being analyzed (overlapping files are rejected):
+
+```powershell
+python -m loganalyzer.cli analyze --logs .\samples --enable-ml --ml-training-logs .\training_samples --format json
+```
+
+`--enable-ml` requires `--ml-training-logs`. Model settings come from
+`[ml.isolation_forest]` in the `--config` TOML file. Output gains a separate
+`ML Anomaly Findings` text section, or `ml_analysis` and `ml_findings` JSON
+fields. Without `--enable-ml`, output is unchanged.
+
+ML findings differ from deterministic alerts: they have no severity, do not
+affect alerts or the exit code, and mean only that an activity pattern deviates
+from the training baseline. They are not confirmed attacks. IsolationForest
+gives no per-feature causal attribution; the listed training ranges and
+percentiles are context only. The model is refit on each run (no persistence),
+and results depend heavily on a representative, mostly normal baseline; an
+unrepresentative baseline produces misleading output.
+
 ## Standalone IsolationForest scoring
 
-The ML model is opt-in and independent of CLI analysis and deterministic
-alerts. It consumes the existing `FeatureObservation` records and returns
+The ML model is opt-in and independent of deterministic alerts. It consumes the existing `FeatureObservation` records and returns
 `MLAnomalyFinding` values labelled `normal` or `anomaly`. An anomaly is a model
 classification, not a confirmed attack. Per-feature ranges and percentiles
 provide training-data context only; they are not causal feature explanations.
@@ -195,9 +222,9 @@ model classifications.
 
 `IsolationForestAnomalyDetector` defaults to a fixed random seed and exposes
 its effective training and decision settings through `model.metadata`.
-Settings can be supplied in `[ml.isolation_forest]` in a TOML config and passed
-directly to the standalone component; the existing engine does not load or
-apply them.
+Settings can be supplied in `[ml.isolation_forest]` in a TOML config and are
+used by both the standalone component (pass them directly) and the CLI ML
+workflow.
 
 ## Current project direction
 

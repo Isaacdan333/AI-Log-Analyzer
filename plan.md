@@ -542,9 +542,10 @@ Completion criteria:
 
 Goal: find unusual behavior that fixed rules may miss.
 
-The feature-engineering layer and an isolated `IsolationForest` scorer are
-implemented as optional ML capabilities. The scorer is independent of the
-deterministic engine and CLI.
+The feature-engineering layer, an isolated `IsolationForest` scorer, and an
+opt-in CLI workflow are implemented as optional ML capabilities. The scorer is
+independent of the deterministic engine; the CLI workflow only adds a separate
+report section.
 
 `loganalyzer.features.engineer_features` accepts normalized events and returns
 fixed-width `FeatureObservation` records without changing the deterministic
@@ -571,11 +572,28 @@ separate from deterministic `Alert` instances.
 
 Install the model dependency with `python -m pip install -e ".[ml]"`; the
 development extra also includes scikit-learn for its tests. Model options are
-available under `[ml.isolation_forest]` in `config.example.toml`, but the
-existing analysis engine and CLI do not apply them or change deterministic
-findings. Synthetic validation uses generated normal SSH/web logs and separate
-normal and conspicuously anomalous model observations; it is a reproducible
-functional check, not a claim of general detection accuracy.
+available under `[ml.isolation_forest]` in `config.example.toml`. Synthetic
+validation uses generated normal SSH/web logs and separate normal and
+conspicuously anomalous model observations; it is a reproducible functional
+check, not a claim of general detection accuracy.
+
+#### Optional ML analysis workflow (implemented)
+
+`loganalyzer.ml.workflow.run_ml_analysis` parses explicit baseline training
+logs with the existing engine (`detectors=[]`), engineers features, fits the
+detector, then scores features from the analyzed events and returns an
+`MLAnalysisResult` holding only anomalous `MLAnomalyFinding` records plus
+counts and model metadata. scikit-learn is imported lazily, so the rule-based
+CLI works without it. `analyze` accepts `--enable-ml` and `--ml-training-logs`
+(both required together; otherwise a usage error). Training logs must not
+overlap the analyzed files, and empty, unparseable or insufficient baselines,
+bad `[ml.isolation_forest]` values, and a missing scikit-learn produce a clear
+error with exit code 1. Anomalies never change the exit code. Text reports gain
+an `ML Anomaly Findings` section and JSON gains `ml_analysis` and `ml_findings`
+fields only when ML is enabled; deterministic alerts, severities and
+deduplication are untouched. There is no model persistence or automatic
+retraining; the model is refit on every run, and its usefulness depends on a
+representative baseline.
 
 ### Phase 3: LLM-Powered Summarization
 

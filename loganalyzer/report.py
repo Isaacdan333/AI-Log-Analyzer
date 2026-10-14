@@ -6,11 +6,21 @@ from collections.abc import Iterable
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loganalyzer.engine import AnalysisResult, ParserDiagnostic
 from loganalyzer.models import Alert
 from loganalyzer.security import redact_sensitive_text
+
+if TYPE_CHECKING:
+    from loganalyzer.ml.isolation_forest import MLAnomalyFinding
+    from loganalyzer.ml.workflow import MLAnalysisResult
+
+ML_DISCLAIMER = (
+    "Anomalous activity patterns are statistical deviations from the supplied training "
+    "baseline, not confirmed attacks. IsolationForest does not attribute a finding to "
+    "any individual feature; the training-range comparisons below are context only."
+)
 
 
 def format_alert(alert: Alert) -> str:
@@ -51,8 +61,13 @@ def format_alerts(alerts: Iterable[Alert]) -> str:
     return "\n\n".join(format_alert(alert) for alert in alerts)
 
 
-def format_text_report(result: AnalysisResult) -> str:
-    """Format an analysis result without altering its findings or their order."""
+def format_text_report(
+    result: AnalysisResult, ml_result: MLAnalysisResult | None = None
+) -> str:
+    """Format an analysis result without altering its findings or their order.
+
+    ML findings, when supplied, are appended in a separate labelled section.
+    """
     lines = [
         "Analysis report",
         "",
@@ -74,19 +89,141 @@ def format_text_report(result: AnalysisResult) -> str:
         lines.extend(["", format_alerts(result.alerts)])
     else:
         lines.append("None")
+    if ml_result is not None:
+        lines.extend(["", *_format_ml_section(ml_result)])
     return "\n".join(lines)
 
 
-def format_json_report(result: AnalysisResult) -> str:
-    """Serialize an analysis result into deterministic, machine-readable JSON."""
-    payload = {
+def format_json_report(result: AnalysisResult, ml_result: MLAnalysisResult | None = None) -> str:
+    """Serialize an analysis result into deterministic, machine-readable JSON.
+
+    ``ml_analysis`` and ``ml_findings`` are added only when ML results are supplied.
+    """
+    payload: dict[str, Any] = {
         "files_processed": [_json_value(path) for path in result.files_processed],
         "files_skipped": [_json_value(path) for path in result.files_skipped],
         "event_count": result.event_count,
         "diagnostics": [_diagnostic_data(diagnostic) for diagnostic in result.diagnostics],
         "alerts": [_alert_data(alert) for alert in result.alerts],
     }
+    if ml_result is not None:
+        payload["ml_analysis"] = _ml_summary_data(ml_result)
+        payload["ml_findings"] = [_ml_finding_data(f) for f in ml_result.findings]
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)
+
+
+def _settings_data(ml_result: MLAnalysisResult) -> dict[str, Any]:
+    metadata = ml_result.metadata
+    settings = metadata.settings
+    return {
+        "n_estimators": settings.n_estimators,
+        "max_samples": settings.max_samples,
+        "contamination": settings.contamination,
+        "random_state": settings.random_state,
+        "effective_max_samples": metadata.effective_max_samples,
+    }
+
+
+def _ml_summary_data(ml_result: MLAnalysisResult) -> dict[str, Any]:
+    metadata = ml_result.metadata
+    return {
+        "model_name": metadata.model_name,
+        "settings": _settings_data(ml_result),
+        "decision_threshold": metadata.decision_threshold,
+        "feature_names": list(metadata.feature_names),
+        "training_event_count": ml_result.training_event_count,
+        "training_observation_count": ml_result.training_observation_count,
+        "scored_observation_count": ml_result.scored_observation_count,
+        "anomaly_count": len(ml_result.findings),
+        "disclaimer": ML_DISCLAIMER,
+    }
+
+
+def _ml_finding_data(finding: MLAnomalyFinding) -> dict[str, Any]:
+    settings = finding.model_metadata.settings
+    return {
+        "model_name": finding.model_name,
+        "classification": finding.classification,
+        "is_anomaly": finding.is_anomaly,
+        "model_score": finding.model_score,
+        "decision_score": finding.decision_score,
+        "decision_threshold": finding.decision_threshold,
+        "source_ip": _json_value(finding.source_ip),
+        "source_group": _json_value(finding.source_group),
+        "log_types": _json_value(finding.log_types),
+        "time_bucket": finding.time_bucket.isoformat(),
+        "feature_names": list(finding.feature_names),
+        "feature_values": dict(zip(finding.feature_names, finding.feature_values)),
+        "training_context": [
+            {
+                "name": ref.name,
+                "observed_value": ref.observed_value,
+                "training_minimum": ref.reference_minimum,
+                "training_maximum": ref.reference_maximum,
+                "training_percentile": ref.reference_percentile,
+                "outside_training_range": ref.outside_reference_range,
+            }
+            for ref in finding.feature_context
+        ],
+        "model_settings": {
+            "n_estimators": settings.n_estimators,
+            "max_samples": settings.max_samples,
+            "contamination": settings.contamination,
+            "random_state": settings.random_state,
+            "effective_max_samples": finding.model_metadata.effective_max_samples,
+        },
+        "explanation": _ml_explanation(finding),
+    }
+
+
+def _ml_explanation(finding: MLAnomalyFinding) -> str:
+    return (
+        "Anomalous activity pattern: this observation scored beyond the model's decision "
+        "threshold relative to the training baseline. This is not a confirmed attack and "
+        "does not identify which feature drove the score."
+    )
+
+
+def _format_ml_section(ml_result: MLAnalysisResult) -> list[str]:
+    metadata = ml_result.metadata
+    settings = _settings_data(ml_result)
+    lines = [
+        "ML Anomaly Findings",
+        "(separate from deterministic alerts; they do not affect alert severity)",
+        ML_DISCLAIMER,
+        f"Model: {metadata.model_name}",
+        "Settings: " + ", ".join(f"{key}={value}" for key, value in settings.items()),
+        f"Decision threshold: {metadata.decision_threshold:.6f}",
+        f"Training events: {ml_result.training_event_count}",
+        f"Training observations: {ml_result.training_observation_count}",
+        f"Scored observations: {ml_result.scored_observation_count}",
+        f"Anomalous observations: {len(ml_result.findings)}",
+    ]
+    if not ml_result.findings:
+        lines.append("None")
+        return lines
+    for index, finding in enumerate(ml_result.findings, start=1):
+        lines.extend(
+            [
+                "",
+                f"ML finding {index}: Anomalous activity pattern",
+                f"Source: {redact_sensitive_text(finding.source_group)}",
+                f"Time bucket (UTC): {finding.time_bucket.isoformat()}",
+                f"Classification: {finding.classification}",
+                f"Model score: {finding.model_score:.6f}",
+                f"Decision score: {finding.decision_score:.6f}",
+                "Training-baseline context (not causal feature importance):",
+            ]
+        )
+        for ref in finding.feature_context:
+            marker = " [outside training range]" if ref.outside_reference_range else ""
+            lines.append(
+                f"- {ref.name}: observed={ref.observed_value:g}, "
+                f"training range={ref.reference_minimum:g}..{ref.reference_maximum:g}, "
+                f"percentile={ref.reference_percentile:g}{marker}"
+            )
+        lines.append(f"Explanation: {_ml_explanation(finding)}")
+    return lines
 
 
 def _format_paths(paths: Iterable[Path]) -> list[str]:

@@ -16,8 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from loganalyzer.config import ConfigurationError, load_config
+from loganalyzer.config import AnalyzerConfig, ConfigurationError, load_config
 from loganalyzer.engine import AnalysisResult, analyze_paths, discover_log_files
+from loganalyzer.ml.workflow import MLAnalysisError, MLAnalysisResult, run_ml_analysis
 from loganalyzer.models import Alert
 from loganalyzer.report import format_json_report, format_text_report
 
@@ -100,6 +101,23 @@ def build_parser() -> ArgumentParser:
         default=None,
         help="Optional TOML configuration file for detector thresholds and report settings.",
     )
+    analyze.add_argument(
+        "--enable-ml",
+        action="store_true",
+        help=(
+            "Opt in to IsolationForest anomaly findings, reported separately from alerts. "
+            "Requires --ml-training-logs and the optional scikit-learn dependency."
+        ),
+    )
+    analyze.add_argument(
+        "--ml-training-logs",
+        type=Path,
+        default=None,
+        help=(
+            "Directory or file of representative baseline logs used to train the model. "
+            "Must not overlap the logs being analyzed."
+        ),
+    )
     return parser
 
 
@@ -153,7 +171,31 @@ def _filter_by_minimum_severity(result: AnalysisResult, minimum: str | None) -> 
     return replace(result, alerts=filtered)
 
 
-def _run_analysis(args: Namespace) -> AnalysisResult:
+def _run_ml(
+    args: Namespace, scoring_paths: list[Path], result: AnalysisResult, config: AnalyzerConfig
+) -> MLAnalysisResult:
+    """Train on the explicit baseline logs and score the analyzed events."""
+    training_paths = _resolve_input_paths(args.ml_training_logs)
+    overlap = {p.resolve() for p in training_paths} & {p.resolve() for p in scoring_paths}
+    if overlap:
+        names = ", ".join(sorted(str(p) for p in overlap))
+        raise CliError(
+            f"ML training logs must be separate from the analyzed logs; overlapping files: {names}"
+        )
+    formats = {path: args.log_type for path in training_paths} if args.log_type else None
+    try:
+        return run_ml_analysis(
+            training_paths,
+            result.events,
+            ml_options=config.ml_options,
+            formats=formats,
+            config=config,
+        )
+    except MLAnalysisError as error:
+        raise CliError(str(error)) from error
+
+
+def _run_analysis(args: Namespace) -> tuple[AnalysisResult, MLAnalysisResult | None]:
     paths = _resolve_input_paths(args.logs)
     formats = {path: args.log_type for path in paths} if args.log_type else None
     try:
@@ -166,17 +208,20 @@ def _run_analysis(args: Namespace) -> AnalysisResult:
         if args.config is None:
             raise
         raise CliError(f"invalid configuration values: {error}") from error
+    ml_result = _run_ml(args, paths, result, config) if args.enable_ml else None
     timezone_name = args.timezone or config.report_options.get("timezone")
     minimum_severity = args.minimum_severity or config.report_options.get("minimum_severity")
     if timezone_name:
         result = _apply_timezone(result, timezone_name)
-    return _filter_by_minimum_severity(result, minimum_severity)
+    return _filter_by_minimum_severity(result, minimum_severity), ml_result
 
 
-def _render_report(result: AnalysisResult, output_format: str) -> str:
+def _render_report(
+    result: AnalysisResult, output_format: str, ml_result: MLAnalysisResult | None = None
+) -> str:
     if output_format == "json":
-        return format_json_report(result)
-    return format_text_report(result)
+        return format_json_report(result, ml_result)
+    return format_text_report(result, ml_result)
 
 
 def _write_report(report: str, out: Path | None) -> None:
@@ -192,10 +237,14 @@ def _write_report(report: str, out: Path | None) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.enable_ml and args.ml_training_logs is None:
+        parser.error("--enable-ml requires --ml-training-logs")
+    if args.ml_training_logs is not None and not args.enable_ml:
+        parser.error("--ml-training-logs requires --enable-ml")
 
     try:
-        result = _run_analysis(args)
-        report = _render_report(result, args.format)
+        result, ml_result = _run_analysis(args)
+        report = _render_report(result, args.format, ml_result)
         _write_report(report, args.out)
     except CliError as error:
         print(f"error: {error}", file=sys.stderr)
