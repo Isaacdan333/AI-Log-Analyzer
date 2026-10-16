@@ -10,6 +10,8 @@ from loganalyzer.detectors.privilege_escalation import PrivilegeEscalationDetect
 from loganalyzer.detectors.suspicious_login import SuspiciousLoginDetector
 from loganalyzer.detectors.unusual_traffic import UnusualTrafficDetector
 from loganalyzer.engine import _default_detectors
+from loganalyzer.features import FEATURE_NAMES
+from loganalyzer.ml import IsolationForestSettings
 
 
 ROOT = Path(__file__).parents[1]
@@ -49,6 +51,24 @@ def test_loads_checked_in_example_configuration() -> None:
         "contamination": 0.05,
         "random_state": 42,
     }
+    defaults = IsolationForestSettings()
+    assert config.ml_options["isolation_forest"] == {
+        "n_estimators": defaults.n_estimators,
+        "max_samples": defaults.max_samples,
+        "contamination": defaults.contamination,
+        "random_state": defaults.random_state,
+    }
+
+
+def test_readme_documents_feature_names_in_contract_order() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme.split())
+    documented_positions = [readme.index(f"`{name}`") for name in FEATURE_NAMES]
+
+    assert documented_positions == sorted(documented_positions)
+    assert "following 12 features" in normalized_readme
+    assert "Events without a source IP are grouped separately by log type" in normalized_readme
+    assert "missingness itself is not represented as a separate feature" in normalized_readme
 
 
 def test_custom_values_reach_all_detector_constructors(tmp_path: Path) -> None:

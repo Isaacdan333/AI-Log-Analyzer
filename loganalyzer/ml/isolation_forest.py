@@ -36,7 +36,7 @@ class IsolationForestMetadata:
     settings: IsolationForestSettings
     training_observation_count: int
     effective_max_samples: int
-    decision_threshold: float
+    raw_score_threshold: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ class MLAnomalyFinding:
     is_anomaly: bool
     model_score: float
     decision_score: float
-    decision_threshold: float
+    raw_score_threshold: float
     feature_names: tuple[str, ...]
     feature_values: tuple[float, ...]
     feature_context: tuple[FeatureReference, ...]
@@ -139,7 +139,7 @@ class IsolationForestAnomalyDetector:
             settings=self.settings,
             training_observation_count=len(vectors),
             effective_max_samples=effective_max_samples,
-            decision_threshold=float(model.offset_),
+            raw_score_threshold=float(model.offset_),
         )
         return self
 
@@ -211,7 +211,7 @@ class IsolationForestAnomalyDetector:
             is_anomaly=is_anomaly,
             model_score=model_score,
             decision_score=decision_score,
-            decision_threshold=self.metadata.decision_threshold,
+            raw_score_threshold=self.metadata.raw_score_threshold,
             feature_names=FEATURE_NAMES,
             feature_values=vector,
             feature_context=context,

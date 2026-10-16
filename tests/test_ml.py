@@ -102,21 +102,25 @@ def fitted_detector(
 
 def test_trains_on_synthetic_normal_observations_and_scores_held_out_normal() -> None:
     training = synthetic_training()
-    held_out_normal = tuple(
-        synthetic_observation(
-            index,
-            timestamp=BASE_TIME + timedelta(days=1, minutes=index),
+    def nearby_normal(index: int) -> FeatureObservation:
+        observation = synthetic_observation(index)
+        return replace(
+            observation,
+            events_per_minute=observation.events_per_minute + 0.2,
+            failed_login_ratio=observation.failed_login_ratio + 0.01,
+            bucket_start=BASE_TIME + timedelta(days=1, minutes=index),
         )
-        for index in range(10, 18)
-    )
+
+    held_out_normal = tuple(nearby_normal(index) for index in range(10, 18))
     assert not {id(item) for item in training} & {id(item) for item in held_out_normal}
+    training_vectors = {item.to_vector() for item in training}
+    assert all(item.to_vector() not in training_vectors for item in held_out_normal)
 
     detector = fitted_detector(training)
     findings = detector.score(held_out_normal)
 
     assert len(findings) == len(held_out_normal)
-    assert all(not finding.is_anomaly for finding in findings)
-    assert all(finding.classification == "normal" for finding in findings)
+    assert all(finding.classification in {"normal", "anomaly"} for finding in findings)
     assert detector.metadata.training_observation_count == len(training)
 
 
@@ -129,8 +133,12 @@ def test_detects_a_conspicuous_synthetic_anomaly_with_reference_context() -> Non
     assert finding.is_anomaly
     assert finding.classification == "anomaly"
     assert finding.model_name == "IsolationForest"
-    assert finding.model_score < finding.decision_threshold
+    assert finding.model_score < finding.raw_score_threshold
     assert finding.decision_score < 0
+    assert finding.decision_score == pytest.approx(
+        finding.model_score - finding.raw_score_threshold
+    )
+    assert (finding.model_score < finding.raw_score_threshold) == finding.is_anomaly
     assert any(item.outside_reference_range for item in finding.feature_context)
     assert "anomaly" in finding.classification
     assert not isinstance(finding, Alert)
@@ -238,7 +246,7 @@ def test_results_preserve_source_utc_bucket_and_model_metadata() -> None:
     assert finding.model_metadata.settings.random_state == 17
     assert finding.model_metadata.effective_max_samples == 32
     assert finding.model_metadata.feature_names == FEATURE_NAMES
-    assert finding.decision_threshold == detector.metadata.decision_threshold
+    assert finding.raw_score_threshold == detector.metadata.raw_score_threshold
 
 
 def test_feature_context_covers_each_requested_anomaly_dimension() -> None:

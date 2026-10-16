@@ -21,6 +21,12 @@ ML_DISCLAIMER = (
     "baseline, not confirmed attacks. IsolationForest does not attribute a finding to "
     "any individual feature; the training-range comparisons below are context only."
 )
+ML_SCORE_SEMANTICS = (
+    "score_samples is the raw IsolationForest score (lower is more abnormal); "
+    "an observation is classified as an outlier when score_samples is below "
+    "raw_score_threshold. decision_function equals score_samples minus "
+    "raw_score_threshold; negative values are outliers and zero is its boundary."
+)
 
 
 def format_alert(alert: Alert) -> str:
@@ -129,7 +135,8 @@ def _ml_summary_data(ml_result: MLAnalysisResult) -> dict[str, Any]:
     return {
         "model_name": metadata.model_name,
         "settings": _settings_data(ml_result),
-        "decision_threshold": metadata.decision_threshold,
+        "raw_score_threshold": metadata.raw_score_threshold,
+        "score_semantics": ML_SCORE_SEMANTICS,
         "feature_names": list(metadata.feature_names),
         "training_event_count": ml_result.training_event_count,
         "training_observation_count": ml_result.training_observation_count,
@@ -145,9 +152,11 @@ def _ml_finding_data(finding: MLAnomalyFinding) -> dict[str, Any]:
         "model_name": finding.model_name,
         "classification": finding.classification,
         "is_anomaly": finding.is_anomaly,
-        "model_score": finding.model_score,
-        "decision_score": finding.decision_score,
-        "decision_threshold": finding.decision_threshold,
+        "score_samples": finding.model_score,
+        "raw_score_threshold": finding.raw_score_threshold,
+        "decision_function": finding.decision_score,
+        "decision_boundary": 0.0,
+        "score_semantics": ML_SCORE_SEMANTICS,
         "source_ip": _json_value(finding.source_ip),
         "source_group": _json_value(finding.source_group),
         "log_types": _json_value(finding.log_types),
@@ -178,9 +187,9 @@ def _ml_finding_data(finding: MLAnomalyFinding) -> dict[str, Any]:
 
 def _ml_explanation(finding: MLAnomalyFinding) -> str:
     return (
-        "Anomalous activity pattern: this observation scored beyond the model's decision "
-        "threshold relative to the training baseline. This is not a confirmed attack and "
-        "does not identify which feature drove the score."
+        "Anomalous activity pattern: score_samples is below the raw_score_threshold, "
+        "and decision_function is negative relative to its zero boundary. This is not "
+        "a confirmed attack and does not identify which feature drove the score."
     )
 
 
@@ -193,7 +202,10 @@ def _format_ml_section(ml_result: MLAnalysisResult) -> list[str]:
         ML_DISCLAIMER,
         f"Model: {metadata.model_name}",
         "Settings: " + ", ".join(f"{key}={value}" for key, value in settings.items()),
-        f"Decision threshold: {metadata.decision_threshold:.6f}",
+        f"Raw score threshold (offset_): {metadata.raw_score_threshold:.6f}",
+        "Score rule: lower score_samples is more abnormal; outlier when "
+        "score_samples < raw score threshold. decision_function = score_samples - "
+        "raw score threshold; negative is outlier, zero is the decision boundary.",
         f"Training events: {ml_result.training_event_count}",
         f"Training observations: {ml_result.training_observation_count}",
         f"Scored observations: {ml_result.scored_observation_count}",
@@ -210,8 +222,9 @@ def _format_ml_section(ml_result: MLAnalysisResult) -> list[str]:
                 f"Source: {redact_sensitive_text(finding.source_group)}",
                 f"Time bucket (UTC): {finding.time_bucket.isoformat()}",
                 f"Classification: {finding.classification}",
-                f"Model score: {finding.model_score:.6f}",
-                f"Decision score: {finding.decision_score:.6f}",
+                f"Raw score (score_samples; lower is more abnormal): {finding.model_score:.6f}",
+                f"Raw-score threshold (offset_; outlier below): {finding.raw_score_threshold:.6f}",
+                f"Decision function (negative is outlier; zero boundary): {finding.decision_score:.6f}",
                 "Training-baseline context (not causal feature importance):",
             ]
         )

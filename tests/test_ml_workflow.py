@@ -127,9 +127,15 @@ def test_end_to_end_flags_anomaly_with_separate_training(
     assert finding["feature_values"]["bytes_sent_total"] > 1_000_000
     assert finding["training_context"][0]["training_maximum"] is not None
     assert finding["model_settings"]["random_state"] == 42
+    assert finding["score_samples"] < finding["raw_score_threshold"]
+    assert finding["decision_function"] == pytest.approx(
+        finding["score_samples"] - finding["raw_score_threshold"]
+    )
+    assert finding["decision_function"] < finding["decision_boundary"] == 0.0
     assert "not a confirmed attack" in finding["explanation"]
     assert payload["ml_analysis"]["training_observation_count"] > 0
     assert payload["ml_analysis"]["scored_observation_count"] > 0
+    assert "lower is more abnormal" in payload["ml_analysis"]["score_semantics"]
 
 
 def test_normal_scoring_data_yields_no_anomalies(
@@ -152,6 +158,9 @@ def test_text_output_has_separate_ml_section(
     ml_section = out[out.index("ML Anomaly Findings"):]
     assert "Anomalous activity pattern" in ml_section
     assert "not causal feature importance" in ml_section
+    assert "Raw score (score_samples; lower is more abnormal)" in ml_section
+    assert "Raw-score threshold (offset_; outlier below)" in ml_section
+    assert "zero boundary" in ml_section
     assert "attack confirmed" not in out.lower()
     assert ANOMALOUS_IP in ml_section
 

@@ -554,11 +554,14 @@ time bucket; records without a source IP are kept separate by log type. A
 60-second bucket is the default, and event volume is normalized to events per
 minute for other bucket lengths.
 
-The numeric vector order is fixed by `FEATURE_NAMES`: events per minute, failed
-login ratio, distinct destination ports, distinct destination hosts, distinct
-users, total bytes sent, and HTTP status-class ratios (1xx through 5xx plus
-other). Status ratios use web events with a status value; missing metrics are
-represented as zero.
+The numeric vector order is fixed by `FEATURE_NAMES`:
+`events_per_minute`, `failed_login_ratio`, `distinct_ports`,
+`distinct_destination_hosts`, `distinct_users`, `bytes_sent_total`,
+`status_1xx_ratio`, `status_2xx_ratio`, `status_3xx_ratio`,
+`status_4xx_ratio`, `status_5xx_ratio`, `status_other_ratio`. Status ratios use
+web events with a status value. Missing metrics are represented as zero to keep
+vectors fixed-width; zero means no metric was observed, and missingness is not
+modeled separately.
 
 `loganalyzer.ml.IsolationForestAnomalyDetector` fits only on caller-supplied
 training observations and scores separate observations. It validates vector
@@ -572,10 +575,23 @@ separate from deterministic `Alert` instances.
 
 Install the model dependency with `python -m pip install -e ".[ml]"`; the
 development extra also includes scikit-learn for its tests. Model options are
-available under `[ml.isolation_forest]` in `config.example.toml`. Synthetic
-validation uses generated normal SSH/web logs and separate normal and
-conspicuously anomalous model observations; it is a reproducible functional
-check, not a claim of general detection accuracy.
+available under `[ml.isolation_forest]` in `config.example.toml`: 100 trees,
+`max_samples=256`, `contamination=0.05`, and fixed `random_state=42`.
+`max_samples` selects the per-tree training sample count; this wrapper accepts
+a positive integer or `"auto"` (not fractional values), and clips integer
+counts to the available training rows. `contamination` establishes the
+assumed outlier proportion for the raw-score threshold; it is not a measured
+malicious-activity rate or accuracy guarantee. Synthetic validation uses
+generated normal SSH/web logs and separate normal-like and conspicuously
+anomalous model observations; it is a reproducible functional check, not a
+claim of general detection accuracy.
+
+The model exposes `score_samples` (raw IsolationForest score, where lower
+means more abnormal) and `offset_` as `raw_score_threshold`; the raw-score
+outlier comparison is `score_samples < raw_score_threshold`. Its
+`decision_function` is `score_samples - raw_score_threshold`, so negative
+values are outliers and zero is the decision boundary. Reports label these
+scales separately.
 
 #### Optional ML analysis workflow (implemented)
 

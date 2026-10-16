@@ -175,10 +175,65 @@ unrepresentative baseline produces misleading output.
 
 ## Standalone IsolationForest scoring
 
-The ML model is opt-in and independent of deterministic alerts. It consumes the existing `FeatureObservation` records and returns
-`MLAnomalyFinding` values labelled `normal` or `anomaly`. An anomaly is a model
-classification, not a confirmed attack. Per-feature ranges and percentiles
-provide training-data context only; they are not causal feature explanations.
+The ML model is opt-in and independent of deterministic alerts. It consumes
+the existing `FeatureObservation` records and returns `MLAnomalyFinding`
+values labelled `normal` or `anomaly`. An anomaly is a model classification,
+not a confirmed attack. Per-feature ranges and percentiles provide
+training-data context only; they are not causal feature explanations.
+
+### Feature vector contract
+
+Every observation has the following 12 features in this exact vector order
+(the names are the `FEATURE_NAMES` contract):
+
+1. `events_per_minute`
+2. `failed_login_ratio`
+3. `distinct_ports`
+4. `distinct_destination_hosts`
+5. `distinct_users`
+6. `bytes_sent_total`
+7. `status_1xx_ratio`
+8. `status_2xx_ratio`
+9. `status_3xx_ratio`
+10. `status_4xx_ratio`
+11. `status_5xx_ratio`
+12. `status_other_ratio`
+
+Events with a source IP are grouped by source IP and UTC-aligned time bucket;
+the default bucket is 60 seconds. Naive event timestamps are interpreted as
+UTC. Events without a source IP are grouped separately by log type and bucket,
+so unrelated source-less event types are not combined.
+
+Missing metrics are represented by zero to keep every feature vector numeric
+and fixed-width. For example, a bucket without login events has a
+`failed_login_ratio` of zero, and a bucket without web status values has zero
+for each status ratio. Zero means no metric was observed; missingness itself is
+not represented as a separate feature, so zero remains a value the model may
+compare with its training data.
+
+### IsolationForest settings and score interpretation
+
+Settings are read from `[ml.isolation_forest]` and match
+`config.example.toml`: `n_estimators = 100`, `max_samples = 256`,
+`contamination = 0.05`, and `random_state = 42`.
+
+- `n_estimators` is the number of trees in the forest.
+- `max_samples` selects the number (or, in scikit-learn, fraction) of training
+  observations sampled for each tree. This project's wrapper currently accepts
+  a positive integer or `"auto"`; the example value is 256 and is limited to
+  the available training observation count. Fractional values are not
+  currently accepted by this wrapper.
+- `contamination` is the assumed proportion of outliers used to establish the
+  raw-score threshold. It is not a measured malicious-activity rate or an
+  accuracy guarantee.
+- `random_state` is the seed used for reproducibility; the default is 42.
+
+Reports label the raw `score_samples` value and its `offset_` threshold
+separately. Lower raw scores are more abnormal; the model classifies an
+observation as an outlier when `score_samples < offset_`. The reported
+`decision_function` is `score_samples - offset_`: negative values classify as
+outliers, and zero is its decision boundary. Neither score identifies why an
+observation is unusual.
 
 This example trains with the generated normal web baseline and scores a
 separate generated web spike. The two sets are parsed and feature-engineered
