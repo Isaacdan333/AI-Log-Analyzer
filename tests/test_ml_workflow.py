@@ -17,6 +17,7 @@ from loganalyzer.cli import main
 from loganalyzer.engine import analyze_paths
 from loganalyzer.ml.workflow import MLAnalysisError, run_ml_analysis
 from loganalyzer.report import format_json_report, format_text_report
+import loganalyzer.llm_provider as llm_provider
 
 SAMPLES_DIR = Path(__file__).parents[1] / "samples"
 BASE_TIME = datetime(2026, 3, 1, 10, 0, 0, tzinfo=timezone.utc)
@@ -286,3 +287,34 @@ def test_report_without_ml_matches_report_with_none(normal_dir: Path) -> None:
     result = analyze_paths(sorted(normal_dir.glob("*.log")))
     assert format_json_report(result) == format_json_report(result, None)
     assert format_text_report(result) == format_text_report(result, None)
+
+
+def test_ml_workflow_does_not_initialize_llm_even_with_key_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    normal_dir: Path,
+    training_dir: Path,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+
+    def unexpected_provider(*args: object, **kwargs: object) -> None:
+        raise AssertionError("ML analysis must not initialize the LLM provider")
+
+    monkeypatch.setattr(llm_provider, "create_openai_provider", unexpected_provider)
+    exit_code = main(
+        [
+            "analyze",
+            "--logs",
+            str(normal_dir),
+            "--enable-ml",
+            "--ml-training-logs",
+            str(training_dir),
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = _json(capsys)
+    assert exit_code == 0
+    assert "ml_analysis" in payload
+    assert "llm_summaries" not in payload

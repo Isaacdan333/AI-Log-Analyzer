@@ -67,6 +67,13 @@ max_samples = 256
 contamination = 0.05
 random_state = 42
 
+[llm]
+# Optional report-only summaries are disabled unless enabled here or by --summarize.
+enabled = false
+provider = "openai"
+model = "gpt-4o-mini"
+timeout_seconds = 20
+
 [report]
 # Optional display filters; CLI flags override these values.
 minimum_severity = "LOW"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 import json
 from pathlib import Path
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from loganalyzer.engine import AnalysisResult, ParserDiagnostic
 from loganalyzer.models import Alert
 from loganalyzer.security import redact_sensitive_text
+from loganalyzer.summarization import AlertSummary
 
 if TYPE_CHECKING:
     from loganalyzer.ml.isolation_forest import MLAnomalyFinding
@@ -68,7 +69,9 @@ def format_alerts(alerts: Iterable[Alert]) -> str:
 
 
 def format_text_report(
-    result: AnalysisResult, ml_result: MLAnalysisResult | None = None
+    result: AnalysisResult,
+    ml_result: MLAnalysisResult | None = None,
+    summaries: Sequence[AlertSummary] | None = None,
 ) -> str:
     """Format an analysis result without altering its findings or their order.
 
@@ -95,12 +98,18 @@ def format_text_report(
         lines.extend(["", format_alerts(result.alerts)])
     else:
         lines.append("None")
+    if summaries is not None:
+        lines.extend(["", *_format_summary_section(summaries)])
     if ml_result is not None:
         lines.extend(["", *_format_ml_section(ml_result)])
     return "\n".join(lines)
 
 
-def format_json_report(result: AnalysisResult, ml_result: MLAnalysisResult | None = None) -> str:
+def format_json_report(
+    result: AnalysisResult,
+    ml_result: MLAnalysisResult | None = None,
+    summaries: Sequence[AlertSummary] | None = None,
+) -> str:
     """Serialize an analysis result into deterministic, machine-readable JSON.
 
     ``ml_analysis`` and ``ml_findings`` are added only when ML results are supplied.
@@ -115,7 +124,54 @@ def format_json_report(result: AnalysisResult, ml_result: MLAnalysisResult | Non
     if ml_result is not None:
         payload["ml_analysis"] = _ml_summary_data(ml_result)
         payload["ml_findings"] = [_ml_finding_data(f) for f in ml_result.findings]
+    if summaries is not None:
+        payload["llm_summaries"] = [
+            _summary_data(index, summary) for index, summary in enumerate(summaries, start=1)
+        ]
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)
+
+
+def _format_summary_section(summaries: Sequence[AlertSummary]) -> list[str]:
+    lines = [
+        "LLM Analyst Summaries",
+        "(advisory prose only; deterministic alert fields and evidence remain authoritative)",
+    ]
+    if not summaries:
+        lines.append("None (no deterministic alerts to summarize)")
+        return lines
+    for index, summary in enumerate(summaries, start=1):
+        lines.extend(
+            [
+                "",
+                f"Summary for alert {index} ({summary.source}):",
+                f"Incident summary: {redact_sensitive_text(summary.incident_summary)}",
+                f"Plain-language explanation: {redact_sensitive_text(summary.explanation)}",
+                "Prioritized recommendations:",
+            ]
+        )
+        if summary.recommendations:
+            lines.extend(
+                f"{rank}. {redact_sensitive_text(action)}"
+                for rank, action in enumerate(summary.recommendations, start=1)
+            )
+        else:
+            lines.append("No response actions were supplied by the deterministic detector.")
+        lines.append("Analyst investigation questions:")
+        lines.extend(
+            f"- {redact_sensitive_text(question)}" for question in summary.investigation_questions
+        )
+    return lines
+
+
+def _summary_data(index: int, summary: AlertSummary) -> dict[str, Any]:
+    return {
+        "alert_index": index,
+        "source": summary.source,
+        "incident_summary": _json_value(summary.incident_summary),
+        "explanation": _json_value(summary.explanation),
+        "recommendations": _json_value(summary.recommendations),
+        "investigation_questions": _json_value(summary.investigation_questions),
+    }
 
 
 def _settings_data(ml_result: MLAnalysisResult) -> dict[str, Any]:

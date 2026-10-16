@@ -21,6 +21,9 @@ dev = [
 ml = [
     "scikit-learn>=1.7,<2",
 ]
+llm = [
+    "openai>=1.42",
+]
 
 [project.scripts]
 loganalyzer = "loganalyzer.cli:main"

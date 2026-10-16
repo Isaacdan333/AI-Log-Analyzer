@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +24,14 @@ _DETECTOR_SECTIONS = frozenset(
         "unusual_traffic",
     }
 )
-_TOP_LEVEL_SECTIONS = _DETECTOR_SECTIONS | {"report", "input", "ml"}
+_TOP_LEVEL_SECTIONS = _DETECTOR_SECTIONS | {"report", "input", "ml", "llm"}
 _REPORT_OPTIONS = frozenset({"minimum_severity", "timezone"})
 _INPUT_OPTIONS = frozenset({"max_file_size_bytes", "max_line_length"})
 _ML_SECTIONS = frozenset({"isolation_forest"})
 _ISOLATION_FOREST_OPTIONS = frozenset(
     {"n_estimators", "max_samples", "contamination", "random_state"}
 )
+_LLM_OPTIONS = frozenset({"enabled", "provider", "model", "timeout_seconds"})
 _SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
 
@@ -41,6 +43,7 @@ class AnalyzerConfig:
     report_options: dict[str, Any] = field(default_factory=dict)
     input_limits: InputLimits = field(default_factory=InputLimits)
     ml_options: dict[str, dict[str, Any]] = field(default_factory=dict)
+    llm_options: dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(path: Path | None = None) -> AnalyzerConfig:
@@ -82,6 +85,32 @@ def load_config(path: Path | None = None) -> AnalyzerConfig:
         if values:
             ml_options[section] = dict(values)
 
+    llm_values = raw_config.get("llm", {})
+    if not isinstance(llm_values, dict):
+        raise ConfigurationError("configuration section 'llm' must be a table")
+    unknown_llm_options = set(llm_values) - _LLM_OPTIONS
+    if unknown_llm_options:
+        names = ", ".join(sorted(unknown_llm_options))
+        raise ConfigurationError(f"unknown llm option(s): {names}")
+    llm_options = dict(llm_values)
+    enabled = llm_options.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigurationError("llm.enabled must be true or false")
+    provider = llm_options.get("provider", "openai")
+    if provider != "openai":
+        raise ConfigurationError("llm.provider must be 'openai'")
+    model = llm_options.get("model", "gpt-4o-mini")
+    if not isinstance(model, str) or not model.strip():
+        raise ConfigurationError("llm.model must be a non-empty string")
+    timeout_seconds = llm_options.get("timeout_seconds", 20)
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not isfinite(timeout_seconds)
+        or not 0 < timeout_seconds <= 300
+    ):
+        raise ConfigurationError("llm.timeout_seconds must be greater than 0 and at most 300")
+
     detector_options: dict[str, dict[str, Any]] = {}
     for section in _DETECTOR_SECTIONS:
         values = raw_config.get(section, {})
@@ -119,4 +148,5 @@ def load_config(path: Path | None = None) -> AnalyzerConfig:
         report_options=dict(report_options),
         input_limits=input_limits,
         ml_options=ml_options,
+        llm_options=llm_options,
     )

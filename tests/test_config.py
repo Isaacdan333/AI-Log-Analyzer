@@ -51,6 +51,12 @@ def test_loads_checked_in_example_configuration() -> None:
         "contamination": 0.05,
         "random_state": 42,
     }
+    assert config.llm_options == {
+        "enabled": False,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "timeout_seconds": 20,
+    }
     defaults = IsolationForestSettings()
     assert config.ml_options["isolation_forest"] == {
         "n_estimators": defaults.n_estimators,
@@ -157,4 +163,45 @@ def test_unknown_ml_configuration_options_are_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigurationError, match="unknown isolation_forest option"):
+        load_config(path)
+
+
+def test_llm_configuration_is_validated_and_does_not_accept_credentials(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "llm.toml"
+    path.write_text(
+        '[llm]\nenabled = true\nprovider = "openai"\nmodel = "gpt-4o-mini"\ntimeout_seconds = 12.5\n',
+        encoding="utf-8",
+    )
+
+    assert load_config(path).llm_options == {
+        "enabled": True,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "timeout_seconds": 12.5,
+    }
+    path.write_text('[llm]\napi_key = "never-allowed-here"\n', encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="unknown llm option"):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ('enabled = "yes"', "llm.enabled"),
+        ('provider = "other"', "llm.provider"),
+        ('model = ""', "llm.model"),
+        ("timeout_seconds = 0", "llm.timeout_seconds"),
+        ("timeout_seconds = nan", "llm.timeout_seconds"),
+        ("timeout_seconds = 301", "llm.timeout_seconds"),
+    ],
+)
+def test_invalid_llm_configuration_is_rejected(
+    tmp_path: Path, entry: str, message: str
+) -> None:
+    path = tmp_path / "invalid_llm.toml"
+    path.write_text(f"[llm]\n{entry}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=message):
         load_config(path)

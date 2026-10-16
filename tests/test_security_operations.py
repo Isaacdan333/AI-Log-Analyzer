@@ -63,6 +63,8 @@ def test_reports_redact_secret_strings_in_text_and_json() -> None:
         {
             "header": "Authorization: Bearer evidence-secret",
             "cookie": "cookie=secret-cookie",
+            "api_key": "sk-live-never-send-this",
+            "unlabeled": "api key=also-secret",
         },
         ("Review",),
     )
@@ -75,6 +77,8 @@ def test_reports_redact_secret_strings_in_text_and_json() -> None:
     assert "summary-secret" not in output
     assert "evidence-secret" not in output
     assert "secret-cookie" not in output
+    assert "sk-live-never-send-this" not in output
+    assert "also-secret" not in output
     assert output.count("[REDACTED]") >= 3
 
 

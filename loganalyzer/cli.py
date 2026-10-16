@@ -8,6 +8,7 @@ itself.
 
 from __future__ import annotations
 
+import os
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from collections.abc import Sequence
@@ -21,6 +22,7 @@ from loganalyzer.engine import AnalysisResult, analyze_paths, discover_log_files
 from loganalyzer.ml.workflow import MLAnalysisError, MLAnalysisResult, run_ml_analysis
 from loganalyzer.models import Alert
 from loganalyzer.report import format_json_report, format_text_report
+from loganalyzer.summarization import AlertSummary, summarize_alert
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_ERROR = 1
@@ -100,6 +102,20 @@ def build_parser() -> ArgumentParser:
         type=Path,
         default=None,
         help="Optional TOML configuration file for detector thresholds and report settings.",
+    )
+    summarize_group = analyze.add_mutually_exclusive_group()
+    summarize_group.add_argument(
+        "--summarize",
+        dest="summarize",
+        action="store_true",
+        default=None,
+        help="Opt in to advisory LLM summaries for deterministic alerts.",
+    )
+    summarize_group.add_argument(
+        "--no-summarize",
+        dest="summarize",
+        action="store_false",
+        help="Disable LLM summaries, overriding [llm].enabled.",
     )
     analyze.add_argument(
         "--enable-ml",
@@ -195,7 +211,9 @@ def _run_ml(
         raise CliError(str(error)) from error
 
 
-def _run_analysis(args: Namespace) -> tuple[AnalysisResult, MLAnalysisResult | None]:
+def _run_analysis(
+    args: Namespace,
+) -> tuple[AnalysisResult, MLAnalysisResult | None, AnalyzerConfig]:
     paths = _resolve_input_paths(args.logs)
     formats = {path: args.log_type for path in paths} if args.log_type else None
     try:
@@ -213,15 +231,55 @@ def _run_analysis(args: Namespace) -> tuple[AnalysisResult, MLAnalysisResult | N
     minimum_severity = args.minimum_severity or config.report_options.get("minimum_severity")
     if timezone_name:
         result = _apply_timezone(result, timezone_name)
-    return _filter_by_minimum_severity(result, minimum_severity), ml_result
+    return _filter_by_minimum_severity(result, minimum_severity), ml_result, config
+
+
+def _summarize_alerts(
+    alerts: Sequence[Alert],
+    config: AnalyzerConfig,
+    enabled_override: bool | None,
+) -> tuple[AlertSummary, ...] | None:
+    enabled = (
+        enabled_override
+        if enabled_override is not None
+        else config.llm_options.get("enabled", False)
+    )
+    if not enabled:
+        return None
+    if not alerts:
+        return ()
+
+    provider = None
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        try:
+            from loganalyzer.llm_provider import create_openai_provider
+
+            provider = create_openai_provider(api_key)
+        except Exception:
+            provider = None
+    model = config.llm_options.get("model", "gpt-4o-mini")
+    timeout_seconds = config.llm_options.get("timeout_seconds", 20)
+    return tuple(
+        summarize_alert(
+            alert,
+            provider,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+        for alert in alerts
+    )
 
 
 def _render_report(
-    result: AnalysisResult, output_format: str, ml_result: MLAnalysisResult | None = None
+    result: AnalysisResult,
+    output_format: str,
+    ml_result: MLAnalysisResult | None = None,
+    summaries: Sequence[AlertSummary] | None = None,
 ) -> str:
     if output_format == "json":
-        return format_json_report(result, ml_result)
-    return format_text_report(result, ml_result)
+        return format_json_report(result, ml_result, summaries)
+    return format_text_report(result, ml_result, summaries)
 
 
 def _write_report(report: str, out: Path | None) -> None:
@@ -243,8 +301,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--ml-training-logs requires --enable-ml")
 
     try:
-        result, ml_result = _run_analysis(args)
-        report = _render_report(result, args.format, ml_result)
+        result, ml_result, config = _run_analysis(args)
+        summaries = _summarize_alerts(result.alerts, config, args.summarize)
+        report = _render_report(result, args.format, ml_result, summaries)
         _write_report(report, args.out)
     except CliError as error:
         print(f"error: {error}", file=sys.stderr)

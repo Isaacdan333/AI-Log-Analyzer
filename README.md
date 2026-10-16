@@ -84,6 +84,7 @@ These are defined in [pyproject.toml](pyproject.toml):
 - pandas
 - python-dateutil
 - scikit-learn is optional for rule-based runs; install the `ml` extra to use the standalone anomaly model.
+- OpenAI is optional; install the `llm` extra only when using hosted LLM summaries.
 
 ### Development dependencies
 
@@ -172,6 +173,82 @@ gives no per-feature causal attribution; the listed training ranges and
 percentiles are context only. The model is refit on each run (no persistence),
 and results depend heavily on a representative, mostly normal baseline; an
 unrepresentative baseline produces misleading output.
+
+## Optional LLM alert summaries (Phase 3)
+
+LLM summaries are report-only prose for deterministic alerts. They do not
+create or change alerts, severity, evidence, detector results, ML
+classifications, or exit codes. The original structured alerts and evidence
+remain in both text and JSON reports. ML findings are never sent to the
+summarizer.
+
+Install the optional OpenAI client:
+
+```powershell
+python -m pip install -e ".[llm]"
+```
+
+Set `OPENAI_API_KEY` in the process environment using your organization's
+approved secret manager or credential-handling method. For example, when
+PowerShell SecretManagement is already configured with a vault:
+
+```powershell
+$env:OPENAI_API_KEY = Get-Secret -Name OpenAIApiKey -AsPlainText
+```
+
+This makes the value available only to that PowerShell process and its child
+processes. Never put the key in `config.toml`, source control, command-line
+arguments, or reports. Provider and model settings use the existing TOML
+configuration mechanism:
+
+```toml
+[llm]
+enabled = false
+provider = "openai"
+model = "gpt-4o-mini"
+timeout_seconds = 20
+```
+
+Enable summaries for one run with `--summarize`, or set `enabled = true` in the
+TOML file passed with `--config`. `--no-summarize` overrides the TOML setting.
+For example:
+
+```powershell
+python -m loganalyzer.cli analyze --logs .\samples --summarize --format json
+python -m loganalyzer.cli analyze --logs .\samples --config .\config.example.toml --no-summarize
+```
+
+Network access is opt-in: ordinary rule-based analysis and ML runs do not
+initialize the provider. A request is attempted only when summaries are enabled
+and `OPENAI_API_KEY` is non-empty. If the key is absent, the SDK is unavailable,
+the provider fails or times out, or output validation fails, a deterministic
+template is used and report generation continues. Provider error details are
+not included in reports.
+
+The provider receives one alert at a time: its structured severity, title,
+existing summary and evidence, detector, allowed response actions, source IPs,
+and time bounds. It does not receive raw files, raw event collections,
+unrelated alerts, ML findings, environment variables, or credentials.
+Nevertheless, evidence may contain usernames, IP addresses, or other sensitive
+values; enabling summaries sends those supplied alert fields to OpenAI. Use
+synthetic or appropriately sanitized data unless that data sharing is
+authorized.
+
+Generated output is schema-checked and conservatively checked for supported
+IP addresses, timestamps, numeric facts, username-like identifiers, the
+authoritative severity, and response actions. Recommendations must be exact
+members of the detector's allowed-action list. Invalid or uncertain output is
+discarded in favor of the deterministic template. These checks reduce common
+unsupported claims but cannot prove every natural-language statement is
+factually correct or detect every possible paraphrase-based hallucination;
+summaries remain advisory and require analyst review.
+
+The test suite uses mocked providers and does not require `OPENAI_API_KEY`,
+network access, or paid API calls:
+
+```powershell
+python -m pytest
+```
 
 ## Standalone IsolationForest scoring
 
@@ -284,16 +361,17 @@ workflow.
 ## Current project direction
 
 The project has a rule-based MVP and an independently usable Phase 2 feature
-engineering and anomaly-scoring layer:
+engineering and anomaly-scoring layer, plus opt-in Phase 3 summaries:
 
 1. parse log sources into a normalized event model
 2. run rule-based detectors for suspicious activity
 3. correlate evidence and produce structured alerts
 4. format clear text or JSON reports
 5. validate against synthetic and sample data
+6. optionally add validated, advisory prose to deterministic alert reports
 
-Optional LLM-based summarization remains a later phase and is intentionally
-secondary to explainability and correctness.
+LLM summaries remain optional and intentionally secondary to explainability
+and correctness.
 
 ## Security and operational notes
 

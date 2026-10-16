@@ -8,6 +8,7 @@ import pytest
 from loganalyzer.engine import AnalysisResult, ParserDiagnostic
 from loganalyzer.models import Alert
 from loganalyzer.report import format_alert, format_alerts, format_json_report, format_text_report
+from loganalyzer.summarization import AlertSummary
 
 
 ALERT = Alert(
@@ -163,6 +164,45 @@ def test_json_report_includes_null_confidence_and_diagnostic_structure() -> None
     assert payload["diagnostics"] == [
         {"path": "bad.csv", "message": "invalid schema", "format": "windows"}
     ]
+
+
+def test_reports_add_summaries_without_replacing_authoritative_alerts() -> None:
+    summary = AlertSummary(
+        incident_summary="Five failures were observed.",
+        explanation="The evidence records five failures from the supplied source.",
+        recommendations=("Review successful logins from this source",),
+        investigation_questions=("Is this activity expected?",),
+        source="llm",
+    )
+    result = _result(alerts=(ALERT,))
+
+    text = format_text_report(result, summaries=(summary,))
+    payload = json.loads(format_json_report(result, summaries=(summary,)))
+
+    assert "LLM Analyst Summaries" in text
+    assert "Observed evidence:" in text
+    assert "Observed count: 5" in text
+    assert "Prioritized recommendations:" in text
+    assert payload["alerts"][0]["severity"] == "HIGH"
+    assert payload["alerts"][0]["evidence"]["username"] == "admin"
+    assert payload["llm_summaries"] == [
+        {
+            "alert_index": 1,
+            "source": "llm",
+            "incident_summary": summary.incident_summary,
+            "explanation": summary.explanation,
+            "recommendations": list(summary.recommendations),
+            "investigation_questions": list(summary.investigation_questions),
+        }
+    ]
+
+
+def test_enabled_summary_report_with_no_alerts_is_still_valid() -> None:
+    result = _result()
+
+    assert "no deterministic alerts" in format_text_report(result, summaries=())
+    payload = json.loads(format_json_report(result, summaries=()))
+    assert payload["llm_summaries"] == []
 
 
 def test_reports_are_deterministic() -> None:

@@ -7,6 +7,7 @@ from loganalyzer.cli import main
 from loganalyzer.engine import analyze_paths
 from loganalyzer.report import format_json_report, format_text_report
 from loganalyzer.synthetic.generate_logs import generate_logs
+import loganalyzer.llm_provider as llm_provider
 
 SAMPLES_DIR = Path(__file__).parents[1] / "samples"
 SSH_BRUTEFORCE_SAMPLE = SAMPLES_DIR / "ssh_bruteforce.log"
@@ -29,7 +30,17 @@ def test_analyze_help_exits_zero_and_documents_options(
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    for option in ("--logs", "--out", "--format", "--minimum-severity", "--log-type", "--timezone", "--config"):
+    for option in (
+        "--logs",
+        "--out",
+        "--format",
+        "--minimum-severity",
+        "--log-type",
+        "--timezone",
+        "--config",
+        "--summarize",
+        "--no-summarize",
+    ):
         assert option in captured.out
     assert "Examples:" in captured.out
 
@@ -211,3 +222,136 @@ def test_cli_reports_missing_config_without_traceback(
     assert exit_code != 0
     assert "Traceback" not in captured.err
     assert "configuration file does not exist" in captured.err
+
+
+def test_summarization_without_api_key_uses_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    provider_initializations: list[str] = []
+    monkeypatch.setattr(
+        llm_provider,
+        "create_openai_provider",
+        lambda *_: provider_initializations.append("initialized"),
+    )
+
+    exit_code = main(
+        ["analyze", "--logs", str(SSH_BRUTEFORCE_SAMPLE), "--summarize", "--format", "json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert len(payload["llm_summaries"]) == len(payload["alerts"])
+    assert payload["llm_summaries"][0]["source"] == "fallback"
+    assert provider_initializations == []
+    assert payload["alerts"][0]["severity"] in {"HIGH", "CRITICAL"}
+    assert payload["llm_summaries"][0]["recommendations"] == payload["alerts"][0][
+        "recommended_actions"
+    ]
+
+
+def test_network_provider_is_not_initialized_for_normal_cli_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    calls: list[str] = []
+
+    def unexpected_provider(*args: object, **kwargs: object) -> None:
+        calls.append("initialized")
+        raise AssertionError("provider must not be initialized")
+
+    monkeypatch.setattr(llm_provider, "create_openai_provider", unexpected_provider)
+
+    exit_code = main(["analyze", "--logs", str(SSH_BRUTEFORCE_SAMPLE), "--format", "json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert calls == []
+    assert "llm_summaries" not in payload
+
+
+def test_explicit_summarization_uses_mock_provider_and_preserves_alerts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    api_key = "test-secret-not-for-reports"
+    monkeypatch.setenv("OPENAI_API_KEY", api_key)
+    provider_calls: list[tuple[dict[str, object], str, float]] = []
+
+    class FakeProvider:
+        def generate(
+            self,
+            alert_data: dict[str, object],
+            *,
+            model: str,
+            timeout_seconds: float,
+        ) -> str:
+            provider_calls.append((alert_data, model, timeout_seconds))
+            return json.dumps(
+                {
+                    "incident_summary": "The deterministic analyzer reported a finding.",
+                    "explanation": "Review the authoritative alert and its supplied evidence.",
+                    "recommendations": ["Review successful logins from this source"],
+                    "investigation_questions": ["Can the supplied evidence be confirmed?"],
+                }
+            )
+
+    monkeypatch.setattr(
+        llm_provider,
+        "create_openai_provider",
+        lambda key: FakeProvider() if key == api_key else None,
+    )
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text(
+        '[llm]\nenabled = true\nmodel = "unit-test-model"\ntimeout_seconds = 7\n',
+        encoding="utf-8",
+    )
+    exit_code = main(
+        [
+            "analyze",
+            "--logs",
+            str(SSH_BRUTEFORCE_SAMPLE),
+            "--format",
+            "json",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert provider_calls
+    assert provider_calls[0][1:] == ("unit-test-model", 7)
+    assert "api_key" not in provider_calls[0][0]
+    assert "raw_line" not in provider_calls[0][0]
+    assert payload["llm_summaries"][0]["source"] == "llm"
+    assert payload["alerts"][0]["severity"] in {"HIGH", "CRITICAL"}
+    assert api_key not in output
+
+
+def test_configured_enable_can_be_overridden_to_disable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text("[llm]\nenabled = true\n", encoding="utf-8")
+    calls: list[str] = []
+    monkeypatch.setattr(llm_provider, "create_openai_provider", lambda *_: calls.append("called"))
+
+    exit_code = main(
+        [
+            "analyze",
+            "--logs",
+            str(SSH_BRUTEFORCE_SAMPLE),
+            "--no-summarize",
+            "--config",
+            str(config_path),
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert calls == []
+    assert "llm_summaries" not in payload

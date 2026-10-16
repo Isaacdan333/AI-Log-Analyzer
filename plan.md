@@ -615,30 +615,41 @@ representative baseline.
 
 Goal: make reports easier for analysts to read without delegating detection decisions to an LLM.
 
-The LLM should receive:
+**Implemented as an optional reporting layer.** `loganalyzer.summarization`
+accepts one immutable deterministic `Alert` at a time and defines a small
+provider protocol plus a validated summary structure. The OpenAI adapter in
+`loganalyzer.llm_provider` is imported lazily and uses Chat Completions JSON
+Schema structured output. The SDK is optional (`.[llm]`); standard analysis
+does not import or initialize the provider.
 
-- Structured alert data
-- Evidence values
-- Detector name
-- Severity selected by the engine
-- Allowed response actions
+The `[llm]` TOML section supports `enabled` (default false), `provider`
+(`"openai"`), `model` (`"gpt-4o-mini"`), and `timeout_seconds` (default 20;
+maximum 300). `--summarize` enables summaries for one run and
+`--no-summarize` disables them even if enabled in the configuration.
+`OPENAI_API_KEY` is read only from the process environment, never from TOML.
+No provider is constructed unless summarization is enabled, an alert exists,
+and a non-empty key is present. Missing credentials or optional SDK selects
+the deterministic fallback without making a network request.
 
-The LLM should produce:
+The provider sees only the current alert's severity, title, summary, structured
+evidence, detector, existing allowed response actions, source IPs, and time
+bounds. It receives no raw files, normalized event stream, unrelated alerts,
+environment contents, credentials, or ML findings. Log/evidence values remain
+untrusted data in the request and are not instructions. No tools or
+remediation interface is provided.
 
-- A concise incident summary
-- A plain-language explanation
-- Prioritized recommendations
-- Questions for an analyst to investigate
-
-The LLM should not:
-
-- Decide severity
-- Create an IP address, count, timestamp, or username
-- Replace raw evidence
-- Execute remediation actions
-- Receive secrets or unnecessary raw logs
-
-Use a templated report automatically when no API key is configured or the LLM request fails. Validate that generated text contains the important structured facts.
+The structured response requires an incident summary, plain-language
+explanation, prioritized recommendations, and investigation questions. Local
+validation independently enforces exact response fields, non-empty bounded
+sections, unchanged severity mentions, supported IPs, timestamps, numeric
+facts and username-like identifiers, and recommendations drawn exactly from
+the alert's allowed actions. A provider error, timeout, missing key/SDK,
+malformed response, or failed/uncertain validation selects a deterministic
+template; provider details are not reported. Text and JSON reports append the
+summary separately while retaining the original alert and evidence. These
+heuristic checks cannot prove arbitrary natural-language claims or detect all
+paraphrased hallucinations; generated summaries are advisory and require
+analyst review.
 
 ### Phase 4: Web Dashboard
 
@@ -691,7 +702,12 @@ Use a checked-in example configuration file with safe defaults. Do not put API k
 - Validate IP addresses and timestamps.
 - Limit maximum file sizes and line lengths.
 - Avoid command execution based on log content.
-- Keep LLM prompts free of credentials and unnecessary personal information.
+- Send alert fields to an LLM provider only after explicit opt-in; alert evidence
+  may include sensitive usernames or IP addresses, so data-sharing approval and
+  sanitization remain the operator's responsibility.
+- Treat schema-constrained output as a format guarantee only, not proof of
+  factual correctness. Use deterministic reporting whenever grounding is
+  uncertain.
 - Redact usernames or IPs in exported reports when required by organizational policy.
 - Use UTC internally where possible and show the timezone in reports.
 - Log parser failures separately from security findings.
@@ -723,7 +739,11 @@ reports/
 7. Normal traffic does not create a large number of false alerts.
 8. All six detector types can be demonstrated with synthetic data.
 9. Malformed input produces parser diagnostics instead of terminating analysis.
-10. Later LLM output preserves the facts from the structured alert.
+10. LLM output preserves the original alert and uses fallback when validation
+    cannot establish that generated prose is sufficiently grounded.
+11. Summarization is opt-in, uses an optional dependency, and falls back without
+    credentials, provider availability, or valid grounded output.
+12. Normal CLI and ML workflows make no LLM initialization or API requests.
 
 ## 19. Recommended Starting Order
 
